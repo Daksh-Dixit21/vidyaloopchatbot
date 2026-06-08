@@ -1,0 +1,8 @@
+venv/
+__pycache__/
+*.pyc
+.env
+*.gguf
+chroma_db/
+*.bin
+node_modules/
