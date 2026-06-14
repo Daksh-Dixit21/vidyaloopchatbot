@@ -1,16 +1,17 @@
+import sys
+sys.path.append('/home/saisi/Dev/vidyaloop-chatbot')
+
 import requests
-from prompts import get_system_prompt
+from app.core.prompts import get_system_prompt
 
 conversation_history = []
 
 def chat(user_message: str) -> str:
-    # Add student message to history
     conversation_history.append({
         "role": "user",
         "content": user_message
     })
 
-    # Build full message list: system prompt + entire history
     messages = [{"role": "system", "content": get_system_prompt()}] + conversation_history
 
     response = requests.post(
@@ -24,8 +25,6 @@ def chat(user_message: str) -> str:
     )
 
     assistant_reply = response.json()["message"]["content"]
-
-    # Add model's reply to history so next turn remembers it
     conversation_history.append({
         "role": "assistant",
         "content": assistant_reply
