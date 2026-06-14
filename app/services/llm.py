@@ -1,42 +1,26 @@
 import requests
 from app.core.prompts import get_system_prompt
+from app.core.config import settings
 
 
 class LLMService:
-    """
-    Handles all communication with the local Ollama inference server.
-    
-    Responsibilities:
-    - Sending messages to phi4-mini
-    - Managing conversation history
-    - Applying the system prompt
-    - Handling errors from Ollama
-    """
-
-    def __init__(self, model: str = "phi4-mini", temperature: float = 0.3):
-        self.model = model
-        self.temperature = temperature
-        self.ollama_url = "http://localhost:11434/api/chat"
+    def __init__(self):
+        self.model = settings.MODEL_NAME
+        self.temperature = settings.TEMPERATURE
+        self.ollama_url = settings.OLLAMA_URL
         self.conversation_history = []
         self.system_prompt = get_system_prompt()
 
     def chat(self, user_message: str) -> str:
-        """
-        Sends a message and returns the model's response.
-        Automatically maintains conversation history.
-        """
-        # Add student message to history
         self.conversation_history.append({
             "role": "user",
             "content": user_message
         })
 
-        # Build full message list
         messages = [
             {"role": "system", "content": self.system_prompt}
         ] + self.conversation_history
 
-        # Call Ollama
         try:
             response = requests.post(
                 self.ollama_url,
@@ -45,10 +29,11 @@ class LLMService:
                     "messages": messages,
                     "stream": False,
                     "options": {
-                        "temperature": self.temperature
+                        "temperature": self.temperature,
+                        "num_ctx": settings.CONTEXT_WINDOW
                     }
                 },
-                timeout=120  # 2 minutes max — slow on CPU fallback
+                timeout=120
             )
             response.raise_for_status()
 
@@ -61,7 +46,6 @@ class LLMService:
 
         assistant_reply = response.json()["message"]["content"]
 
-        # Add reply to history
         self.conversation_history.append({
             "role": "assistant",
             "content": assistant_reply
@@ -70,9 +54,7 @@ class LLMService:
         return assistant_reply
 
     def reset(self):
-        """Clears conversation history. Call this to start a new session."""
         self.conversation_history = []
 
     def get_history(self) -> list:
-        """Returns the full conversation history."""
         return self.conversation_history
