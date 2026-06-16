@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from app.services.llm import LLMService
 from app.models.student import StudentProfile
@@ -11,6 +12,16 @@ import json
 app = FastAPI(
     title="VidyaLoop Socratic Tutor API",
     version="0.1.0"
+)
+
+# CORS — allows the React frontend to call this API from a browser
+# In production, replace "*" with your actual frontend URL 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],        # Change to weblink corresponding to frontend in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 sessions: dict[str, LLMService] = {}
@@ -26,7 +37,8 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     session_id: str
-    reply: str
+    reply: str                  # Raw text (for simple clients)
+    blocks: list[dict]          # Parsed blocks (for rich frontend)
     hint_count: int
 
 
@@ -34,6 +46,7 @@ class ChatResponse(BaseModel):
 def root():
     return {"status": "VidyaLoop Tutor API is running"}
 
+from app.services.parser import parse_response
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
@@ -47,10 +60,12 @@ def chat(request: ChatRequest):
 
     tutor = sessions[request.session_id]
     reply = tutor.chat(request.message)
+    blocks = parse_response(reply)
 
     return ChatResponse(
         session_id=request.session_id,
         reply=reply,
+        blocks=[b.to_dict() for b in blocks],
         hint_count=tutor.profile.hint_count
     )
 
