@@ -1,86 +1,108 @@
-import requests
-from app.core.prompts import get_system_prompt
-from app.core.config import settings
-from app.models.student import StudentProfile
+"""
+Large Language Model (LLM) Service.
+This module handles all communication with the local Ollama instance.
+It is entirely stateless—it does not store chat history in memory. 
+Instead, it fetches the full history from the database on every request.
+"""
 
+import httpx
+import json
+from app.core.config import settings
+from app.core.prompts import build_system_prompt
+from app.services.storage import storage
+from app.models.storage import Message
 
 class LLMService:
-    def __init__(self, profile: StudentProfile = None):
-        self.model = settings.MODEL_NAME
-        self.temperature = settings.TEMPERATURE
-        self.ollama_url = settings.OLLAMA_URL
-        self.conversation_history = []
-        self.profile = profile or StudentProfile()
+    """
+    Service class responsible for generating AI responses using Ollama.
+    """
+    def __init__(self):
+        self.base_url = settings.OLLAMA_BASE_URL
+        self.model = settings.OLLAMA_MODEL
 
-    def chat(self, user_message: str) -> str:
-        # Detect if this is a new concept or a follow-up
-        # Simple heuristic: if message ends with ? or is long, it's a new concept
-        is_new_concept = (
-            len(user_message.split()) > 3 or
-            self.profile.hint_count == 0
-        )
+    async def get_response_stream(self, session_id: str, student_message: str):
+        """
+        An asynchronous generator that streams text chunks from Ollama.
+        
+        Args:
+            session_id: The ID of the current chat session.
+            student_message: The text submitted by the user.
+            
+        Yields:
+            Server-Sent Events (SSE) formatted strings containing JSON data.
+        """
+        # 1. Fetch the session and all previous messages from the SQLite database
+        session = storage.get_session(session_id)
+        if not session:
+            yield f"data: {json.dumps({'error': 'Session not found'})}\n\n"
+            return
+            
+        messages = storage.get_messages(session_id)
+        
+        # 2. Build the dynamic system prompt (injects the student's name, class, etc.)
+        system_prompt = build_system_prompt(session)
+        
+        # 3. Construct the exact message array that Ollama expects
+        ollama_messages = [{"role": "system", "content": system_prompt}]
+        for msg in messages:
+            ollama_messages.append({"role": msg.role, "content": msg.content})
+            
+        # Add the brand new user message to the array
+        ollama_messages.append({"role": "user", "content": student_message})
+        
+        # 4. Save the user's message to the database immediately
+        storage.add_message(Message(
+            session_id=session_id,
+            role="user",
+            content=student_message
+        ))
 
-        if is_new_concept and user_message.lower() not in ["i don't know", "idk", "no idea", "i dont know", "?"]:
-            self.profile.new_concept(user_message)
+        # 5. Configure the Ollama API request payload
+        payload = {
+            "model": self.model,
+            "messages": ollama_messages,
+            "stream": True,
+            "options": {
+                "temperature": 0.7
+            }
+        }
+        
+        full_response = ""
+        
+        # 6. Make an asynchronous, non-blocking HTTP request to Ollama
+        async with httpx.AsyncClient() as client:
+            try:
+                # Use stream() to receive chunks as Ollama generates them
+                async with client.stream("POST", f"{self.base_url}/api/chat", json=payload, timeout=httpx.Timeout(60.0)) as response:
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                            
+                            # If we received a text chunk
+                            if "message" in data and "content" in data["message"]:
+                                chunk = data["message"]["content"]
+                                full_response += chunk
+                                
+                                # Yield the chunk to the FastAPI endpoint, which forwards it to the React frontend
+                                yield f"data: {json.dumps({'type': 'token', 'text': chunk})}\n\n"
+                                
+                            # If the generation is completely finished
+                            if data.get("done", False):
+                                # Save the final, complete AI response to the database
+                                storage.add_message(Message(
+                                    session_id=session_id,
+                                    role="assistant",
+                                    content=full_response
+                                ))
+                                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                                
+                        except json.JSONDecodeError:
+                            # Safely ignore corrupted JSON chunks
+                            continue
+            except Exception as e:
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-        # Add student message to history
-        self.conversation_history.append({
-            "role": "user",
-            "content": user_message
-        })
-
-        # Build system prompt with current hint state injected
-        system_prompt = get_system_prompt(
-            profile=self.profile,
-            hint_count=self.profile.hint_count,
-            should_reveal=self.profile.should_reveal()
-        )
-
-        messages = [
-            {"role": "system", "content": system_prompt}
-        ] + self.conversation_history
-
-        try:
-            response = requests.post(
-                self.ollama_url,
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "stream": False,
-                    "options": {
-                        "temperature": self.temperature,
-                        "num_ctx": settings.CONTEXT_WINDOW
-                    }
-                },
-                timeout=120
-            )
-            response.raise_for_status()
-
-        except requests.exceptions.ConnectionError:
-            return "Error: Cannot connect to Ollama. Is it running?"
-        except requests.exceptions.Timeout:
-            return "Error: Model took too long to respond."
-        except requests.exceptions.HTTPError as e:
-            return f"Error: Ollama returned {e.response.status_code}"
-
-        assistant_reply = response.json()["message"]["content"]
-
-        # Increment hint count AFTER getting response
-        self.profile.increment_hint()
-
-        self.conversation_history.append({
-            "role": "assistant",
-            "content": assistant_reply
-        })
-
-        return assistant_reply
-
-    def update_frustration(self, level: float):
-        self.profile.frustration_level = max(0.0, min(1.0, level))
-
-    def reset(self):
-        self.conversation_history = []
-        self.profile.hint_count = 0
-
-    def get_history(self) -> list:
-        return self.conversation_history
+# Singleton instance exported for use in main.py
+llm_service = LLMService()

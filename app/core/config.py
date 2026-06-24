@@ -14,17 +14,15 @@ class Settings:
     - You change ONE file (.env), everything updates automatically
     """
 
-    # Ollama settings
-    OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat")
-    MODEL_NAME: str = os.getenv("MODEL_NAME", "phi4-mini")
-    TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.3"))
-    MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "500"))
+    # Ollama settings (Used by LLMService)
+    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "phi4-mini")
+    TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.7"))
     CONTEXT_WINDOW: int = int(os.getenv("CONTEXT_WINDOW", "8192"))
 
     # App settings
     APP_NAME: str = "VidyaLoop Socratic Tutor"
-    VERSION: str = "0.1.0"
-
+    VERSION: str = "0.2.0"
 
 # Single instance used across the entire app
 settings = Settings()

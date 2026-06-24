@@ -1,3 +1,10 @@
+"""
+Storage Schemas Module.
+This module defines Pydantic models used for data validation and API payloads.
+These are the core domain objects used by the Python application to handle state
+before it interacts with the database.
+"""
+
 from pydantic import BaseModel, Field
 from typing import Optional, Literal
 from datetime import datetime
@@ -5,21 +12,14 @@ import uuid
 
 
 def generate_id() -> str:
-    """Generates a unique ID for sessions and messages."""
+    """Generates a secure, unique UUID string for new sessions and messages."""
     return str(uuid.uuid4())
 
 
 class Session(BaseModel):
     """
-    Represents one student's chat session.
-    
-    A session starts when a student opens the chatbot
-    and ends when they close it or after inactivity.
-    
-    Why Pydantic BaseModel instead of dataclass?
-    Pydantic validates data types automatically and
-    can serialize to/from JSON natively — perfect for
-    storing in Supabase and sending to the frontend.
+    Represents a chat session domain object.
+    Used by the backend to track an ongoing conversation with a student.
     """
     session_id: str = Field(default_factory=generate_id)
     student_name: str
@@ -30,26 +30,19 @@ class Session(BaseModel):
     is_active: bool = True
 
     class Config:
-        # Allows datetime objects to serialize to ISO string in JSON
+        # Ensures datetime objects are serialized to ISO 8601 strings when converting to JSON
         json_encoders = {datetime: lambda v: v.isoformat()}
 
 
 class Message(BaseModel):
     """
-    Represents one message in a conversation.
-    Both student messages and tutor responses are stored here.
-    
-    Why store blocks separately from content?
-    content = raw text (for search, fine-tuning data later)
-    blocks  = parsed structured data (for rendering in frontend)
-    Both are needed for different purposes.
+    Represents a single chat message domain object.
     """
     message_id: str = Field(default_factory=generate_id)
     session_id: str
     role: Literal["user", "assistant"]
     content: str
-    blocks: list[dict] = []      # Parsed response blocks
-    hint_count: int = 0          # Hint number at time of this message
+    hint_count: int = 0
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Config:
@@ -58,16 +51,14 @@ class Message(BaseModel):
 
 class SessionSummary(BaseModel):
     """
-    A lightweight version of Session + its messages.
-    Used when the frontend requests conversation history.
-    We don't send the full Session object — only what the UI needs.
+    A lightweight representation of a session, primarily used by the
+    FastAPI endpoint that populates the frontend sidebar.
     """
     session_id: str
     student_name: str
     class_level: int
     started_at: datetime
     message_count: int
-    messages: list[Message] = []
 
     class Config:
         json_encoders = {datetime: lambda v: v.isoformat()}

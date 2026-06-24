@@ -1,89 +1,171 @@
-from app.models.storage import Session, Message
+from app.models.storage import Session, Message, SessionSummary
+from app.models.database import SessionDB, MessageDB
+from app.database import SessionLocal
 from datetime import datetime
-
 
 class StorageService:
     """
-    In-memory storage service for the MVP.
+    Persistent SQLite storage service.
     
-    This class is intentionally designed to mirror
-    what a real database service would look like.
-    Every method here maps directly to a Supabase operation:
+    This implements the Repository Pattern. The rest of the application
+    (like `main.py` and `llm.py`) only interacts with this class and the Pydantic
+    models (`Session`, `Message`). They never interact directly with SQLAlchemy.
     
-    create_session()     → INSERT INTO sessions
-    get_session()        → SELECT FROM sessions WHERE session_id = ?
-    add_message()        → INSERT INTO messages
-    get_messages()       → SELECT FROM messages WHERE session_id = ?
-    end_session()        → UPDATE sessions SET ended_at = ? WHERE session_id = ?
-    
-    When you migrate to Supabase, you replace the internals
-    of each method without changing anything that calls them.
-    That is why this pattern (called Repository Pattern) matters —
-    the rest of your app never knows or cares where data is stored.
+    This separation of concerns means you could swap out SQLite for PostgreSQL
+    or Supabase in the future simply by updating the code in this file, without
+    touching the rest of the application.
     """
-
-    def __init__(self):
-        # Two simple dicts act as our "database tables" for now
-        self._sessions: dict[str, Session] = {}
-        self._messages: dict[str, list[Message]] = {}
-
-    # ─── Session Operations ────────────────────────────────────────
-
+    
     def create_session(self, session: Session) -> Session:
-        """Creates a new session. Returns the created session."""
-        self._sessions[session.session_id] = session
-        self._messages[session.session_id] = []
-        return session
+        """
+        Takes a Pydantic Session model, converts it to an SQLAlchemy SessionDB model,
+        and saves it to the SQLite database.
+        """
+        # 1. Open a new database connection
+        db = SessionLocal()
+        try:
+            # 2. Map Pydantic model to SQLAlchemy model
+            db_session = SessionDB(
+                session_id=session.session_id,
+                student_name=session.student_name,
+                class_level=session.class_level,
+                learner_type=session.learner_type,
+                started_at=session.started_at,
+                ended_at=session.ended_at,
+                is_active=session.is_active
+            )
+            # 3. Add to transaction and commit
+            db.add(db_session)
+            db.commit()
+            return session
+        finally:
+            # 4. Always close the connection
+            db.close()
 
     def get_session(self, session_id: str) -> Session | None:
-        """Returns a session by ID, or None if not found."""
-        return self._sessions.get(session_id)
+        """
+        Fetches a session from the database by its ID.
+        Converts the SQLAlchemy model back to a Pydantic model for the app to use.
+        """
+        db = SessionLocal()
+        try:
+            db_session = db.query(SessionDB).filter(SessionDB.session_id == session_id).first()
+            if db_session:
+                return Session(
+                    session_id=db_session.session_id,
+                    student_name=db_session.student_name,
+                    class_level=db_session.class_level,
+                    learner_type=db_session.learner_type,
+                    started_at=db_session.started_at,
+                    ended_at=db_session.ended_at,
+                    is_active=db_session.is_active
+                )
+            return None
+        finally:
+            db.close()
 
-    def end_session(self, session_id: str) -> bool:
-        """Marks a session as ended. Returns True if found."""
-        session = self._sessions.get(session_id)
-        if session:
-            session.ended_at = datetime.utcnow()
-            session.is_active = False
-            return True
-        return False
+    def delete_session(self, session_id: str) -> bool:
+        """
+        Hard deletes a session and all its associated messages from the database.
+        Returns True if successful, False if the session was not found.
+        """
+        db = SessionLocal()
+        try:
+            # Delete all messages associated with the session
+            db.query(MessageDB).filter(MessageDB.session_id == session_id).delete()
+            # Delete the session itself
+            deleted_count = db.query(SessionDB).filter(SessionDB.session_id == session_id).delete()
+            db.commit()
+            return deleted_count > 0
+        finally:
+            db.close()
 
-    def list_sessions(self) -> list[Session]:
-        """Returns all sessions. Useful for admin dashboard later."""
-        return list(self._sessions.values())
-
-    # ─── Message Operations ────────────────────────────────────────
+    def list_sessions(self) -> list[SessionSummary]:
+        """
+        Returns a list of lightweight SessionSummary objects for the frontend sidebar.
+        Orders by the most recently started session first.
+        """
+        db = SessionLocal()
+        try:
+            # Fetch all sessions, ordered by date descending
+            db_sessions = db.query(SessionDB).order_by(SessionDB.started_at.desc()).all()
+            summaries = []
+            for s in db_sessions:
+                # Count the number of messages in each session
+                count = db.query(MessageDB).filter(MessageDB.session_id == s.session_id).count()
+                summaries.append(SessionSummary(
+                    session_id=s.session_id,
+                    student_name=s.student_name,
+                    class_level=s.class_level,
+                    started_at=s.started_at,
+                    message_count=count
+                ))
+            return summaries
+        finally:
+            db.close()
 
     def add_message(self, message: Message) -> Message:
-        """Adds a message to a session's history."""
-        if message.session_id not in self._messages:
-            self._messages[message.session_id] = []
-        self._messages[message.session_id].append(message)
-        return message
+        """
+        Saves a single chat message (either user or assistant) to the database.
+        """
+        db = SessionLocal()
+        try:
+            db_message = MessageDB(
+                message_id=message.message_id,
+                session_id=message.session_id,
+                role=message.role,
+                content=message.content,
+                hint_count=message.hint_count,
+                created_at=message.created_at
+            )
+            db.add(db_message)
+            db.commit()
+            return message
+        finally:
+            db.close()
 
     def get_messages(self, session_id: str) -> list[Message]:
-        """Returns all messages for a session in order."""
-        return self._messages.get(session_id, [])
+        """
+        Retrieves the entire chat history for a given session, ordered chronologically.
+        """
+        db = SessionLocal()
+        try:
+            db_messages = db.query(MessageDB).filter(MessageDB.session_id == session_id).order_by(MessageDB.created_at.asc()).all()
+            return [
+                Message(
+                    message_id=m.message_id,
+                    session_id=m.session_id,
+                    role=m.role,
+                    content=m.content,
+                    hint_count=m.hint_count,
+                    created_at=m.created_at
+                ) for m in db_messages
+            ]
+        finally:
+            db.close()
 
     def get_message_count(self, session_id: str) -> int:
-        """Returns number of messages in a session."""
-        return len(self._messages.get(session_id, []))
-
-    # ─── Stats ────────────────────────────────────────────────────
+        """Quickly count messages for a session without loading them all."""
+        db = SessionLocal()
+        try:
+            return db.query(MessageDB).filter(MessageDB.session_id == session_id).count()
+        finally:
+            db.close()
 
     def get_stats(self) -> dict:
-        """Returns basic system stats. Useful for health monitoring."""
-        return {
-            "total_sessions": len(self._sessions),
-            "active_sessions": sum(
-                1 for s in self._sessions.values() if s.is_active
-            ),
-            "total_messages": sum(
-                len(msgs) for msgs in self._messages.values()
-            )
-        }
+        """Returns aggregate stats across the entire database."""
+        db = SessionLocal()
+        try:
+            total_sessions = db.query(SessionDB).count()
+            active_sessions = db.query(SessionDB).filter(SessionDB.is_active == True).count()
+            total_messages = db.query(MessageDB).count()
+            return {
+                "total_sessions": total_sessions,
+                "active_sessions": active_sessions,
+                "total_messages": total_messages
+            }
+        finally:
+            db.close()
 
-
-# Single instance shared across the entire app
-# This is called a Singleton — one storage object, used everywhere
+# Singleton instance used throughout the app
 storage = StorageService()

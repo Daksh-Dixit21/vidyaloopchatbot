@@ -1,6 +1,3 @@
-import sys
-sys.path.append('/home/saisi/Dev/vidyaloop-chatbot')
-
 from app.services.llm import LLMService
 from app.models.student import StudentProfile
 

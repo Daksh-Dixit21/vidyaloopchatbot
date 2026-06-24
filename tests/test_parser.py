@@ -1,6 +1,3 @@
-import sys
-sys.path.append('/home/saisi/Dev/vidyaloop-chatbot')
-
 from app.services.parser import parse_response
 
 test_response = """

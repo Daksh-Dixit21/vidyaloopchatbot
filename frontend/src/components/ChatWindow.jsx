@@ -1,95 +1,134 @@
 import { useState, useRef, useEffect } from 'react'
 import MessageBubble from './MessageBubble'
 import InputBar from './InputBar'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Bot, Sparkles } from 'lucide-react'
 
-// Unique session ID for this browser session
-// In production this will come from auth. For now, random string.
-const SESSION_ID = 'session_' + Math.random().toString(36).substring(2, 9)
 const API_URL = 'http://localhost:8000'
 
-function ChatWindow() {
+/**
+ * ChatWindow Component
+ * 
+ * The main interface where the student interacts with the AI tutor.
+ * Handles fetching chat history, sending messages, and streaming responses
+ * in real-time via Server-Sent Events (SSE).
+ * 
+ * Props:
+ * - sessionId: The ID of the session to display
+ * - onMessageSent: Callback triggered when a new message is successfully sent
+ */
+function ChatWindow({ sessionId, onMessageSent }) {
+    // Stores the array of finalized messages (both user and assistant)
     const [messages, setMessages] = useState([])
+    
+    // Tracks if we are waiting for the backend to start sending data
     const [isLoading, setIsLoading] = useState(false)
+    
+    // Stores the chunk-by-chunk text as it streams in from Ollama
     const [streamingContent, setStreamingContent] = useState('')
-    const [hintCount, setHintCount] = useState(0)
+    
+    // Ref used to auto-scroll to the bottom of the chat
     const messagesEndRef = useRef(null)
 
-    // Auto-scroll to bottom when new messages arrive
+    /**
+     * Effect: Fetch Chat History
+     * Runs whenever the `sessionId` changes. Replaces the current `messages`
+     * array with the history pulled from the SQLite database.
+     */
+    useEffect(() => {
+        if (!sessionId) return;
+        fetch(`${API_URL}/session/${sessionId}/history`)
+            .then(res => {
+                if (!res.ok) throw new Error("Not found")
+                return res.json()
+            })
+            .then(data => {
+                setMessages(data.messages || [])
+            })
+            .catch(err => {
+                console.log("New session or fetch error", err)
+                setMessages([]) // Default to empty if it's a brand new session
+            })
+    }, [sessionId])
+
+    /**
+     * Effect: Auto-Scroll
+     * Runs whenever `messages` or `streamingContent` changes, smoothly
+     * scrolling the user to the bottom of the screen.
+     */
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
     }, [messages, streamingContent])
 
+    /**
+     * Handles sending a message to the backend and parsing the SSE stream.
+     */
     async function sendMessage(userText) {
-        // Add user message to UI immediately
+        // 1. Instantly display the user's message in the UI
         const userMessage = {
             role: 'user',
-            blocks: [{ type: 'text', content: userText }]
+            content: userText
         }
         setMessages(prev => [...prev, userMessage])
+        
+        // 2. Set loading states
         setIsLoading(true)
         setStreamingContent('')
 
         try {
-            /**
-             * fetch() with streaming:
-             * Instead of waiting for the full response,
-             * we read the response body as a stream.
-             * Each chunk is one SSE event from your FastAPI backend.
-             */
+            // 3. Make POST request to the streaming endpoint
             const response = await fetch(`${API_URL}/chat/stream`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    session_id: SESSION_ID,
+                    session_id: sessionId,
                     message: userText,
                     student_name: 'Student',
-                    class_level: 11
+                    class_level: 11,
+                    learner_type: 'text'
                 })
             })
 
+            // 4. Set up the stream reader
             const reader = response.body.getReader()
             const decoder = new TextDecoder()
             let fullText = ''
 
-            // Read the stream chunk by chunk
+            // 5. Read chunks continuously until the stream finishes
             while (true) {
                 const { done, value } = await reader.read()
                 if (done) break
 
-                // Decode the binary chunk to text
                 const chunk = decoder.decode(value)
-
-                // SSE format: "data: {...}\n\n"
-                // Split on double newline to get individual events
                 const lines = chunk.split('\n')
 
+                // Parse the Server-Sent Events (SSE) format
                 for (const line of lines) {
                     if (line.startsWith('data: ')) {
                         try {
-                            const data = JSON.parse(line.slice(6))  // Remove "data: " prefix
+                            const data = JSON.parse(line.slice(6))
 
-                            if (data.token) {
-                                // New token arrived — add to streaming display
-                                fullText += data.token
+                            // If it's a token, append it to our ongoing string
+                            if (data.type === 'token') {
+                                fullText += data.text
                                 setStreamingContent(fullText)
                             }
 
-                            if (data.done) {
-                                // Stream complete — move from streaming to messages list
-                                setHintCount(data.hint_count)
-
-                                // Fetch the structured blocks from the non-streaming endpoint
-                                // OR parse here. For now use the full text as one text block.
-                                const assistantMessage = {
+                            // If Ollama is done generating
+                            if (data.type === 'done') {
+                                // Add the fully formed message to the messages array
+                                setMessages(prev => [...prev, {
                                     role: 'assistant',
-                                    blocks: [{ type: 'text', content: fullText }]
-                                }
-                                setMessages(prev => [...prev, assistantMessage])
+                                    content: fullText
+                                }])
+                                // Clear the temporary streaming state
                                 setStreamingContent('')
+                                // Ping App.jsx so the Sidebar can update
+                                if (onMessageSent) onMessageSent()
                             }
 
                         } catch (e) {
-                            // Ignore malformed SSE lines
+                            // Safely ignore malformed JSON chunks from the stream
                         }
                     }
                 }
@@ -99,7 +138,7 @@ function ChatWindow() {
             console.error('Chat error:', error)
             setMessages(prev => [...prev, {
                 role: 'assistant',
-                blocks: [{ type: 'text', content: 'Error: Could not connect to tutor.' }]
+                content: 'Error: Could not connect to tutor.'
             }])
         } finally {
             setIsLoading(false)
@@ -107,90 +146,87 @@ function ChatWindow() {
     }
 
     return (
-        <div className="flex flex-col h-screen bg-slate-900">
-
-            {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 
-                      border-b border-slate-700 bg-slate-900">
-                <div>
-                    <h1 className="text-white font-semibold text-lg">VidyaLoop Tutor</h1>
-                    <p className="text-slate-400 text-xs">CBSE Class 11 · Socratic Method</p>
+        <div className="flex flex-col h-full bg-slate-900/50 backdrop-blur-xl relative">
+            
+            {/* Top Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-slate-900/80 backdrop-blur-md sticky top-0 z-10">
+                <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center">
+                        <Bot size={18} className="text-blue-400" />
+                    </div>
+                    <div>
+                        <h1 className="text-white font-medium tracking-wide">VidyaLoop</h1>
+                        <p className="text-slate-400 text-xs">Socratic AI Assistant</p>
+                    </div>
                 </div>
-                {hintCount > 0 && (
-                    <div className="bg-slate-800 px-3 py-1 rounded-full">
-                        <span className="text-slate-400 text-xs">
-                            Hint {hintCount}/5
-                        </span>
-                    </div>
-                )}
             </div>
 
-            {/* Messages area */}
-            <div className="flex-1 overflow-y-auto px-4 py-6">
-
-                {/* Welcome message */}
-                {messages.length === 0 && (
-                    <div className="flex flex-col items-center justify-center 
-                          h-full text-center">
-                        <div className="w-16 h-16 rounded-full bg-blue-600 flex items-center 
-                            justify-center text-white text-2xl font-bold mb-4">
-                            VL
-                        </div>
-                        <h2 className="text-white text-xl font-semibold mb-2">
-                            Hello, Student
-                        </h2>
-                        <p className="text-slate-400 text-sm max-w-sm">
-                            Ask me anything from your CBSE syllabus.
-                            I will guide you to the answer — not give it to you.
-                        </p>
-                    </div>
-                )}
-
-                {/* Rendered messages */}
-                {messages.map((msg, index) => (
-                    <MessageBubble
-                        key={index}
-                        role={msg.role}
-                        blocks={msg.blocks}
-                        isStreaming={false}
-                    />
-                ))}
-
-                {/* Currently streaming response */}
-                {streamingContent && (
-                    <MessageBubble
-                        role="assistant"
-                        blocks={[{ type: 'text', content: streamingContent }]}
-                        isStreaming={true}
-                    />
-                )}
-
-                {/* Loading indicator before first token arrives */}
-                {isLoading && !streamingContent && (
-                    <div className="flex justify-start mb-4">
-                        <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center 
-                            justify-center text-white text-xs font-bold mr-3">
-                            VL
-                        </div>
-                        <div className="bg-slate-800 rounded-2xl rounded-tl-sm px-4 py-3">
-                            <div className="flex gap-1">
-                                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"
-                                    style={{ animationDelay: '0ms' }} />
-                                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"
-                                    style={{ animationDelay: '150ms' }} />
-                                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"
-                                    style={{ animationDelay: '300ms' }} />
+            {/* Scrollable Message Area */}
+            <div className="flex-1 overflow-y-auto px-4 py-8 custom-scrollbar">
+                <div className="max-w-3xl mx-auto flex flex-col gap-6">
+                    
+                    {/* Empty State Welcome Screen */}
+                    {messages.length === 0 && (
+                        <motion.div 
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="flex flex-col items-center justify-center py-20 text-center"
+                        >
+                            <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-xl shadow-blue-900/20 mb-6">
+                                <Sparkles className="text-white" size={28} />
                             </div>
-                        </div>
-                    </div>
-                )}
+                            <h2 className="text-white text-2xl font-semibold mb-3">
+                                How can I help you today?
+                            </h2>
+                            <p className="text-slate-400 max-w-md leading-relaxed">
+                                Ask me anything about CBSE Physics, Chemistry, or Math. I will guide you to discover the answers yourself.
+                            </p>
+                        </motion.div>
+                    )}
 
-                {/* Invisible div at the bottom — scroll target */}
-                <div ref={messagesEndRef} />
+                    {/* Render existing messages with AnimatePresence for smooth mounting */}
+                    <AnimatePresence initial={false}>
+                        {messages.map((msg, index) => (
+                            <MessageBubble
+                                key={index}
+                                role={msg.role}
+                                content={msg.content}
+                            />
+                        ))}
+                    </AnimatePresence>
+
+                    {/* Render the currently streaming message (if any) */}
+                    {streamingContent && (
+                        <MessageBubble
+                            role="assistant"
+                            content={streamingContent}
+                            isStreaming={true}
+                        />
+                    )}
+                    
+                    {/* Invisible div to scroll down to */}
+                    <div ref={messagesEndRef} className="h-4" />
+                </div>
             </div>
 
-            {/* Input */}
-            <InputBar onSend={sendMessage} disabled={isLoading} />
+            {/* Bottom Input Area */}
+            <div className="p-4 bg-gradient-to-t from-slate-950 via-slate-900 to-transparent pt-10">
+                <div className="max-w-3xl mx-auto relative">
+                    
+                    {/* "Thinking" indicator shown before the stream starts */}
+                    {isLoading && !streamingContent && (
+                        <motion.div 
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="absolute -top-8 left-0 right-0 text-center text-xs text-blue-400/80 font-medium tracking-wide animate-pulse"
+                        >
+                            Tutor is thinking deeply...
+                        </motion.div>
+                    )}
+                    
+                    <InputBar onSend={sendMessage} disabled={isLoading} />
+                </div>
+            </div>
         </div>
     )
 }
