@@ -4,7 +4,7 @@ import InputBar from './InputBar'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Bot, Sparkles } from 'lucide-react'
 
-const API_URL = 'http://localhost:8000'
+const API_URL = import.meta.env.VITE_API_URL || 'https://vidyaloop-chatbot.onrender.com'
 
 /**
  * ChatWindow Component

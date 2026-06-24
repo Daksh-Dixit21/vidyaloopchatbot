@@ -22,7 +22,7 @@ function App() {
    * or creates a new random session ID if the database is completely empty.
    */
   const fetchSessions = () => {
-    fetch('http://localhost:8000/sessions')
+    fetch(`${import.meta.env.VITE_API_URL || 'https://vidyaloop-chatbot.onrender.com'}/sessions`)
       .then(res => res.json())
       .then(data => {
         setSessions(data)
@@ -59,7 +59,7 @@ function App() {
    */
   async function handleDeleteSession(idToDelete) {
     try {
-      await fetch(`http://localhost:8000/session/${idToDelete}`, { method: 'DELETE' })
+      await fetch(`${import.meta.env.VITE_API_URL || 'https://vidyaloop-chatbot.onrender.com'}/session/${idToDelete}`, { method: 'DELETE' })
       const updatedSessions = sessions.filter(s => s.session_id !== idToDelete)
       setSessions(updatedSessions)
       
