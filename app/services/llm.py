@@ -73,7 +73,8 @@ class LLMService:
         async with httpx.AsyncClient() as client:
             try:
                 # Use stream() to receive chunks as Ollama generates them
-                async with client.stream("POST", f"{self.base_url}/api/chat", json=payload, timeout=httpx.Timeout(60.0)) as response:
+                headers = {"ngrok-skip-browser-warning": "true"}
+                async with client.stream("POST", f"{self.base_url}/api/chat", json=payload, headers=headers, timeout=httpx.Timeout(60.0)) as response:
                     async for line in response.aiter_lines():
                         if not line:
                             continue
