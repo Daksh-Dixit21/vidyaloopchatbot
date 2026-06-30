@@ -21,12 +21,15 @@ app = FastAPI(
     version="0.2.0" # Major upgrade to ChatGPT-equivalent async architecture
 )
 
+import os
+
 # Enable CORS (Cross-Origin Resource Sharing)
 # This allows our React frontend (running on a different port) to communicate with this backend.
+cors_origin = os.getenv("FRONTEND_URL", "*")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[cors_origin],
+    allow_credentials=(cors_origin != "*"),
     allow_methods=["*"],
     allow_headers=["*"],
 )
