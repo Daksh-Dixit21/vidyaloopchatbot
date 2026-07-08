@@ -1,171 +1,306 @@
+"""
+Storage Service (async PostgreSQL + sync SQLite fallback).
+
+Implements the Repository Pattern. The rest of the application only interacts
+with this class and the Pydantic models. They never interact directly with SQLAlchemy.
+
+When DATABASE_URL is set (Supabase), uses async PostgreSQL.
+When not set, falls back to sync SQLite for local dev.
+"""
+
 from app.models.storage import Session, Message, SessionSummary
 from app.models.database import SessionDB, MessageDB
-from app.database import SessionLocal
+from app.database import has_postgres, AsyncSessionLocal, SessionLocal
 from datetime import datetime
+from sqlalchemy import select, func, delete
+from sqlalchemy.orm import selectinload, joinedload
+
 
 class StorageService:
     """
-    Persistent SQLite storage service.
-    
-    This implements the Repository Pattern. The rest of the application
-    (like `main.py` and `llm.py`) only interacts with this class and the Pydantic
-    models (`Session`, `Message`). They never interact directly with SQLAlchemy.
-    
-    This separation of concerns means you could swap out SQLite for PostgreSQL
-    or Supabase in the future simply by updating the code in this file, without
-    touching the rest of the application.
+    Repository for session and message persistence.
+    Methods are async if PostgreSQL is active, sync otherwise.
     """
-    
-    def create_session(self, session: Session) -> Session:
-        """
-        Takes a Pydantic Session model, converts it to an SQLAlchemy SessionDB model,
-        and saves it to the SQLite database.
-        """
-        # 1. Open a new database connection
-        db = SessionLocal()
-        try:
-            # 2. Map Pydantic model to SQLAlchemy model
-            db_session = SessionDB(
-                session_id=session.session_id,
-                student_name=session.student_name,
-                class_level=session.class_level,
-                learner_type=session.learner_type,
-                started_at=session.started_at,
-                ended_at=session.ended_at,
-                is_active=session.is_active
-            )
-            # 3. Add to transaction and commit
-            db.add(db_session)
-            db.commit()
-            return session
-        finally:
-            # 4. Always close the connection
-            db.close()
 
-    def get_session(self, session_id: str) -> Session | None:
-        """
-        Fetches a session from the database by its ID.
-        Converts the SQLAlchemy model back to a Pydantic model for the app to use.
-        """
-        db = SessionLocal()
-        try:
-            db_session = db.query(SessionDB).filter(SessionDB.session_id == session_id).first()
-            if db_session:
-                return Session(
-                    session_id=db_session.session_id,
-                    student_name=db_session.student_name,
-                    class_level=db_session.class_level,
-                    learner_type=db_session.learner_type,
-                    started_at=db_session.started_at,
-                    ended_at=db_session.ended_at,
-                    is_active=db_session.is_active
+    async def create_session(self, session: Session) -> Session:
+        if has_postgres:
+            async with AsyncSessionLocal() as db:
+                db_session = SessionDB(
+                    session_id=session.session_id,
+                    student_name=session.student_name,
+                    class_level=session.class_level,
+                    learner_type=session.learner_type,
+                    started_at=session.started_at,
+                    ended_at=session.ended_at,
+                    is_active=session.is_active,
                 )
-            return None
-        finally:
-            db.close()
+                db.add(db_session)
+                await db.commit()
+                return session
+        else:
+            db = SessionLocal()
+            try:
+                db_session = SessionDB(
+                    session_id=session.session_id,
+                    student_name=session.student_name,
+                    class_level=session.class_level,
+                    learner_type=session.learner_type,
+                    started_at=session.started_at,
+                    ended_at=session.ended_at,
+                    is_active=session.is_active,
+                )
+                db.add(db_session)
+                db.commit()
+                return session
+            finally:
+                db.close()
 
-    def delete_session(self, session_id: str) -> bool:
-        """
-        Hard deletes a session and all its associated messages from the database.
-        Returns True if successful, False if the session was not found.
-        """
-        db = SessionLocal()
-        try:
-            # Delete all messages associated with the session
-            db.query(MessageDB).filter(MessageDB.session_id == session_id).delete()
-            # Delete the session itself
-            deleted_count = db.query(SessionDB).filter(SessionDB.session_id == session_id).delete()
-            db.commit()
-            return deleted_count > 0
-        finally:
-            db.close()
+    async def get_session(self, session_id: str) -> Session | None:
+        if has_postgres:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(SessionDB).where(SessionDB.session_id == session_id)
+                )
+                db_session = result.scalar_one_or_none()
+                if db_session:
+                    return Session(
+                        session_id=db_session.session_id,
+                        student_name=db_session.student_name,
+                        class_level=db_session.class_level,
+                        learner_type=db_session.learner_type,
+                        started_at=db_session.started_at,
+                        ended_at=db_session.ended_at,
+                        is_active=db_session.is_active,
+                    )
+                return None
+        else:
+            db = SessionLocal()
+            try:
+                db_session = (
+                    db.query(SessionDB)
+                    .filter(SessionDB.session_id == session_id)
+                    .first()
+                )
+                if db_session:
+                    return Session(
+                        session_id=db_session.session_id,
+                        student_name=db_session.student_name,
+                        class_level=db_session.class_level,
+                        learner_type=db_session.learner_type,
+                        started_at=db_session.started_at,
+                        ended_at=db_session.ended_at,
+                        is_active=db_session.is_active,
+                    )
+                return None
+            finally:
+                db.close()
 
-    def list_sessions(self) -> list[SessionSummary]:
-        """
-        Returns a list of lightweight SessionSummary objects for the frontend sidebar.
-        Orders by the most recently started session first.
-        """
-        db = SessionLocal()
-        try:
-            # Fetch all sessions, ordered by date descending
-            db_sessions = db.query(SessionDB).order_by(SessionDB.started_at.desc()).all()
-            summaries = []
-            for s in db_sessions:
-                # Count the number of messages in each session
-                count = db.query(MessageDB).filter(MessageDB.session_id == s.session_id).count()
-                summaries.append(SessionSummary(
-                    session_id=s.session_id,
-                    student_name=s.student_name,
-                    class_level=s.class_level,
-                    started_at=s.started_at,
-                    message_count=count
-                ))
-            return summaries
-        finally:
-            db.close()
+    async def delete_session(self, session_id: str) -> bool:
+        if has_postgres:
+            async with AsyncSessionLocal() as db:
+                # Delete messages first (FK constraint)
+                await db.execute(
+                    delete(MessageDB).where(MessageDB.session_id == session_id)
+                )
+                result = await db.execute(
+                    delete(SessionDB).where(SessionDB.session_id == session_id)
+                )
+                await db.commit()
+                return result.rowcount > 0
+        else:
+            db = SessionLocal()
+            try:
+                db.query(MessageDB).filter(
+                    MessageDB.session_id == session_id
+                ).delete()
+                deleted = (
+                    db.query(SessionDB)
+                    .filter(SessionDB.session_id == session_id)
+                    .delete()
+                )
+                db.commit()
+                return deleted > 0
+            finally:
+                db.close()
 
-    def add_message(self, message: Message) -> Message:
-        """
-        Saves a single chat message (either user or assistant) to the database.
-        """
-        db = SessionLocal()
-        try:
-            db_message = MessageDB(
-                message_id=message.message_id,
-                session_id=message.session_id,
-                role=message.role,
-                content=message.content,
-                hint_count=message.hint_count,
-                created_at=message.created_at
-            )
-            db.add(db_message)
-            db.commit()
-            return message
-        finally:
-            db.close()
+    async def list_sessions(self) -> list[SessionSummary]:
+        if has_postgres:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(SessionDB).order_by(SessionDB.started_at.desc())
+                )
+                db_sessions = result.scalars().all()
+                summaries = []
+                for s in db_sessions:
+                    count_result = await db.execute(
+                        select(func.count(MessageDB.message_id)).where(
+                            MessageDB.session_id == s.session_id
+                        )
+                    )
+                    count = count_result.scalar()
+                    summaries.append(
+                        SessionSummary(
+                            session_id=s.session_id,
+                            student_name=s.student_name,
+                            class_level=s.class_level,
+                            started_at=s.started_at,
+                            message_count=count,
+                        )
+                    )
+                return summaries
+        else:
+            db = SessionLocal()
+            try:
+                db_sessions = (
+                    db.query(SessionDB)
+                    .order_by(SessionDB.started_at.desc())
+                    .all()
+                )
+                summaries = []
+                for s in db_sessions:
+                    count = (
+                        db.query(MessageDB)
+                        .filter(MessageDB.session_id == s.session_id)
+                        .count()
+                    )
+                    summaries.append(
+                        SessionSummary(
+                            session_id=s.session_id,
+                            student_name=s.student_name,
+                            class_level=s.class_level,
+                            started_at=s.started_at,
+                            message_count=count,
+                        )
+                    )
+                return summaries
+            finally:
+                db.close()
 
-    def get_messages(self, session_id: str) -> list[Message]:
-        """
-        Retrieves the entire chat history for a given session, ordered chronologically.
-        """
-        db = SessionLocal()
-        try:
-            db_messages = db.query(MessageDB).filter(MessageDB.session_id == session_id).order_by(MessageDB.created_at.asc()).all()
-            return [
-                Message(
-                    message_id=m.message_id,
-                    session_id=m.session_id,
-                    role=m.role,
-                    content=m.content,
-                    hint_count=m.hint_count,
-                    created_at=m.created_at
-                ) for m in db_messages
-            ]
-        finally:
-            db.close()
+    async def add_message(self, message: Message) -> Message:
+        if has_postgres:
+            async with AsyncSessionLocal() as db:
+                db_message = MessageDB(
+                    message_id=message.message_id,
+                    session_id=message.session_id,
+                    role=message.role,
+                    content=message.content,
+                    hint_count=message.hint_count,
+                    created_at=message.created_at,
+                )
+                db.add(db_message)
+                await db.commit()
+                return message
+        else:
+            db = SessionLocal()
+            try:
+                db_message = MessageDB(
+                    message_id=message.message_id,
+                    session_id=message.session_id,
+                    role=message.role,
+                    content=message.content,
+                    hint_count=message.hint_count,
+                    created_at=message.created_at,
+                )
+                db.add(db_message)
+                db.commit()
+                return message
+            finally:
+                db.close()
 
-    def get_message_count(self, session_id: str) -> int:
-        """Quickly count messages for a session without loading them all."""
-        db = SessionLocal()
-        try:
-            return db.query(MessageDB).filter(MessageDB.session_id == session_id).count()
-        finally:
-            db.close()
+    async def get_messages(self, session_id: str) -> list[Message]:
+        if has_postgres:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(MessageDB)
+                    .where(MessageDB.session_id == session_id)
+                    .order_by(MessageDB.created_at.asc())
+                )
+                db_messages = result.scalars().all()
+                return [
+                    Message(
+                        message_id=m.message_id,
+                        session_id=m.session_id,
+                        role=m.role,
+                        content=m.content,
+                        hint_count=m.hint_count,
+                        created_at=m.created_at,
+                    )
+                    for m in db_messages
+                ]
+        else:
+            db = SessionLocal()
+            try:
+                db_messages = (
+                    db.query(MessageDB)
+                    .filter(MessageDB.session_id == session_id)
+                    .order_by(MessageDB.created_at.asc())
+                    .all()
+                )
+                return [
+                    Message(
+                        message_id=m.message_id,
+                        session_id=m.session_id,
+                        role=m.role,
+                        content=m.content,
+                        hint_count=m.hint_count,
+                        created_at=m.created_at,
+                    )
+                    for m in db_messages
+                ]
+            finally:
+                db.close()
 
-    def get_stats(self) -> dict:
-        """Returns aggregate stats across the entire database."""
-        db = SessionLocal()
-        try:
-            total_sessions = db.query(SessionDB).count()
-            active_sessions = db.query(SessionDB).filter(SessionDB.is_active == True).count()
-            total_messages = db.query(MessageDB).count()
-            return {
-                "total_sessions": total_sessions,
-                "active_sessions": active_sessions,
-                "total_messages": total_messages
-            }
-        finally:
-            db.close()
+    async def get_message_count(self, session_id: str) -> int:
+        if has_postgres:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(func.count(MessageDB.message_id)).where(
+                        MessageDB.session_id == session_id
+                    )
+                )
+                return result.scalar()
+        else:
+            db = SessionLocal()
+            try:
+                return (
+                    db.query(MessageDB)
+                    .filter(MessageDB.session_id == session_id)
+                    .count()
+                )
+            finally:
+                db.close()
 
-# Singleton instance used throughout the app
+    async def get_stats(self) -> dict:
+        if has_postgres:
+            async with AsyncSessionLocal() as db:
+                total_sessions_result = await db.execute(
+                    select(func.count(SessionDB.session_id))
+                )
+                active_sessions_result = await db.execute(
+                    select(func.count(SessionDB.session_id)).where(
+                        SessionDB.is_active == True
+                    )
+                )
+                total_messages_result = await db.execute(
+                    select(func.count(MessageDB.message_id))
+                )
+                return {
+                    "total_sessions": total_sessions_result.scalar(),
+                    "active_sessions": active_sessions_result.scalar(),
+                    "total_messages": total_messages_result.scalar(),
+                }
+        else:
+            db = SessionLocal()
+            try:
+                return {
+                    "total_sessions": db.query(SessionDB).count(),
+                    "active_sessions": db.query(SessionDB).filter(
+                        SessionDB.is_active == True
+                    ).count(),
+                    "total_messages": db.query(MessageDB).count(),
+                }
+            finally:
+                db.close()
+
+
 storage = StorageService()

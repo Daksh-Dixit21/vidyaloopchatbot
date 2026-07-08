@@ -1,31 +1,49 @@
 """
 Database Configuration Module.
-This module sets up the SQLAlchemy engine and session factory for our SQLite database.
-We use SQLAlchemy as an ORM (Object Relational Mapper) to easily map Python classes to database tables.
+Supports both async PostgreSQL (Supabase) and sync SQLite fallback.
 """
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from app.core.config import settings
 
-# The SQLite database file will be created in the root directory.
-SQLALCHEMY_DATABASE_URL = "sqlite:///./vidyaloop.db"
+has_postgres = bool(settings.DATABASE_URL)
 
-# Create the SQLAlchemy engine. 
-# check_same_thread=False is needed for SQLite to allow multiple threads (like FastAPI routes) to share the same connection.
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-)
+if has_postgres:
+    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+    from sqlalchemy.orm import declarative_base
 
-# Create a SessionLocal class. Each instance of this class will be an actual database session.
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        pool_size=5,
+        max_overflow=10,
+        pool_pre_ping=True,
+    )
+    AsyncSessionLocal = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    SessionLocal = None
 
-# Base class for our database models. All models will inherit from this Base.
+else:
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import declarative_base, sessionmaker
+
+    engine = create_engine(
+        "sqlite:///./vidyaloop.db",
+        connect_args={"check_same_thread": False},
+    )
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    AsyncSessionLocal = None
+
 Base = declarative_base()
 
 def init_db():
-    """
-    Initializes the database by creating all tables defined in models that inherit from `Base`.
-    This should be called when the application starts up.
-    """
-    Base.metadata.create_all(bind=engine)
+    """Creates all tables. Sync version for SQLite, no-op for PostgreSQL (managed by supabase_init.sql)."""
+    if not has_postgres and SessionLocal:
+        Base.metadata.create_all(bind=engine)
+
+async def init_db_async():
+    """Async version for PostgreSQL — can be called on startup."""
+    if has_postgres:
+        async with engine.begin() as conn:
+            from app.models.database import SessionDB, MessageDB
+            await conn.run_sync(Base.metadata.create_all)
 
