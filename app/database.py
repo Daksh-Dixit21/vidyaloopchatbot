@@ -3,15 +3,13 @@ Database Configuration Module.
 Supports both async PostgreSQL (Supabase) and sync SQLite fallback.
 """
 
+import socket
+from urllib.parse import urlparse
+
 from app.core.config import settings
 
 
 def _ensure_async_driver(url: str) -> str:
-    """
-    Supabase gives URLs like postgresql://user:pass@host/db
-    but SQLAlchemy async needs postgresql+asyncpg://user:pass@host/db.
-    Auto-fix if the driver is missing.
-    """
     if url.startswith("postgresql://") and "+asyncpg" not in url:
         return url.replace("postgresql://", "postgresql+asyncpg://", 1)
     if url.startswith("postgres://") and "+asyncpg" not in url:
@@ -19,7 +17,18 @@ def _ensure_async_driver(url: str) -> str:
     return url
 
 
-has_postgres = bool(settings.DATABASE_URL)
+def _host_resolves(hostname: str) -> bool:
+    try:
+        socket.getaddrinfo(hostname, None)
+        return True
+    except socket.gaierror:
+        return False
+
+
+_url = settings.DATABASE_URL
+_parsed = urlparse(_url) if _url else None
+_host = _parsed.hostname if _parsed else ""
+has_postgres = bool(_url) and bool(_host) and _host_resolves(_host)
 
 if has_postgres:
     from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -53,13 +62,11 @@ Base = declarative_base()
 
 
 def init_db():
-    """Creates all tables. Sync version for SQLite, no-op for PostgreSQL (managed by supabase_init.sql)."""
     if not has_postgres and SessionLocal:
         Base.metadata.create_all(bind=engine)
 
 
 async def init_db_async():
-    """Async version for PostgreSQL — can be called on startup."""
     if has_postgres:
         async with engine.begin() as conn:
             from app.models.database import SessionDB, MessageDB
