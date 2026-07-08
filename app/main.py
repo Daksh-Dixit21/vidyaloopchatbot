@@ -98,11 +98,7 @@ async def health():
 @app.get("/sessions")
 async def get_sessions():
     """List all chat sessions for the sidebar."""
-    try:
-        return await storage.list_sessions()
-    except Exception as e:
-        from fastapi.responses import JSONResponse
-        return JSONResponse({"error": str(e), "type": type(e).__name__}, status_code=500)
+    return await storage.list_sessions()
 
 
 @app.get("/session/{session_id}/history")

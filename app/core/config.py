@@ -16,7 +16,7 @@ class Settings:
     # Groq API settings
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
-    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.1-8b-instruct")
+    GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 
     # Supabase PostgreSQL
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
