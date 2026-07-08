@@ -42,7 +42,11 @@ app.add_middleware(
 async def startup_event():
     """Initialize database tables and warm up caches."""
     if has_postgres:
-        await init_db_async()
+        try:
+            await init_db_async()
+        except Exception as e:
+            print(f"WARNING: Could not connect to PostgreSQL: {e}")
+            print("Falling back to SQLite. Set DATABASE_URL correctly or remove it to use SQLite only.")
     else:
         init_db()
 
