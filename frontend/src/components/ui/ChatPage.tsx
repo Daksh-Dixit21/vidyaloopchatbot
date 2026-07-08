@@ -10,6 +10,7 @@ import Sidebar from "../Sidebar";
 import ChatWindow from "../ChatWindow";
 import EmptyState from "../EmptyState";
 import InputBar from "../InputBar";
+import logo from "../../assets/logo.png";
 
 const subjectMeta = {
   Math: { icon: "\u2211", color: "subject-math", tag: "Math" },
@@ -217,8 +218,8 @@ const ChatPage = ({ onBack }: ChatPageProps) => {
       {/* Header */}
       <header className="flex justify-between items-center px-4 md:px-6 py-3 md:py-4 relative z-[3] flex-shrink-0">
         <div className="flex items-center gap-2">
-          <img src="http://hextaui.com/logo.svg" width={24} height={24} className="md:w-[28px] md:h-[28px]" />
-          <div className="font-bold text-xs md:text-sm">HextaAI</div>
+          <img src={logo} alt="VidyaLoop" className="w-5 h-5 md:w-7 md:h-7 object-contain" />
+          <div className="font-bold text-xs md:text-sm">VidyaLoop</div>
         </div>
         <button
           onClick={onBack}

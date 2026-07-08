@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Search, Plus, X, Home, GraduationCap } from 'lucide-react'
+import { Search, Plus, X, Home } from 'lucide-react'
+import logo from '../assets/logo.png'
 
 function Sidebar({ conversations, subjectMeta, activeConvId, onSelectConversation, onNewChat, onClose, onHome }) {
   const [searchQuery, setSearchQuery] = useState('')
@@ -16,9 +17,7 @@ function Sidebar({ conversations, subjectMeta, activeConvId, onSelectConversatio
       {/* Top bar with Home button */}
       <div className="flex items-center justify-between px-3 pt-3 pb-2 flex-shrink-0">
         <div className="flex items-center gap-2">
-          <div className="relative flex items-center justify-center w-6 h-6 rounded-md bg-gradient-to-tr from-[#00ffc6] to-[#00cca2] shadow-[0_0_8px_rgba(0,255,198,0.2)]">
-            <GraduationCap className="w-3.5 h-3.5 text-[#0c0414]" strokeWidth={2.5} />
-          </div>
+          <img src={logo} alt="VidyaLoop" className="w-5 h-5 md:w-6 md:h-6 object-contain" />
           <span className="font-bold text-xs tracking-wide text-white/90">VidyaLoop</span>
         </div>
         <div className="flex items-center gap-1">

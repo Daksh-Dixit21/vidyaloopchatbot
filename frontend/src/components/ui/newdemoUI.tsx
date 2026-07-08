@@ -2,7 +2,8 @@
 
 import * as React from "react";
 import { useState, useRef, useCallback } from "react";
-import { Menu, GraduationCap, Plus, X, BookOpen, Sparkles } from "lucide-react";
+import { Menu, Plus, X, BookOpen, Sparkles } from "lucide-react";
+import logo from "../../assets/logo.png";
 import { Canvas } from "@react-three/fiber";
 import { Environment, ContactShadows } from "@react-three/drei";
 import { RobotPrototype, ResponsiveGroup } from "./robot-hero";
@@ -435,9 +436,7 @@ const Hero1 = () => {
       {!isChatMode && (
         <header className="flex justify-between items-center px-4 md:px-6 py-3 md:py-4 relative z-[3] flex-shrink-0">
           <div className="flex items-center gap-2">
-            <div className="relative flex items-center justify-center w-7 h-7 rounded-lg bg-gradient-to-tr from-[#00ffc6] to-[#00cca2] shadow-[0_0_12px_rgba(0,255,198,0.25)]">
-              <GraduationCap className="w-4 h-4 text-[#0c0414]" strokeWidth={2.5} />
-            </div>
+            <img src={logo} alt="VidyaLoop" className="w-6 h-6 md:w-7 md:h-7 object-contain" />
             <div className="font-bold text-xs md:text-sm tracking-wide text-white/90">VidyaLoop</div>
           </div>
           <button
