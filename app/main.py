@@ -4,7 +4,6 @@ FastAPI application with dual LLM provider support (Ollama + Groq),
 response caching, rate limiting, and async PostgreSQL storage.
 """
 
-import os
 import json
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -28,11 +27,14 @@ app = FastAPI(
 )
 
 # Enable CORS
-cors_origin = os.getenv("FRONTEND_URL", "*")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[cors_origin],
-    allow_credentials=(cors_origin != "*"),
+    allow_origins=[
+        "https://vidyaloopchatbot.vercel.app",
+        "http://localhost:5173",
+        "http://localhost:3000",
+    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
