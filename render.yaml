@@ -1,0 +1,36 @@
+# Render Blueprint — VidyaLoop Backend
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: vidyaloop-backend
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: LLM_PROVIDER
+        value: groq
+      - key: GROQ_MODEL
+        value: llama-3.1-8b-instruct
+      - key: TEMPERATURE
+        value: "0.7"
+      - key: CONTEXT_WINDOW
+        value: "8192"
+      - key: RATE_LIMIT_RPM
+        value: "28"
+      - key: RATE_LIMIT_RPD
+        value: "900"
+      - key: GROQ_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
