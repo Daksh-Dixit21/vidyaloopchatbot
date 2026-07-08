@@ -1,234 +1,463 @@
 import { useState, useRef, useEffect } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Flame, Clock, Award, ChevronRight, Zap, MessageSquare, Sparkles, BookOpen, CheckCircle } from 'lucide-react'
 import MessageBubble from './MessageBubble'
 import InputBar from './InputBar'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Bot, Sparkles } from 'lucide-react'
+import TypingIndicator from './TypingIndicator'
+import ConfettiEffect from './ConfettiEffect'
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://vidyaloop-chatbot.onrender.com'
+const quickReplies = [
+  { label: '🔍 Break it down', text: 'Break it down' },
+  { label: '📐 Show formula', text: 'Show formula' },
+  { label: '🌍 Real-world example', text: 'Real-world example' },
+  { label: '💡 Give me a hint', text: 'Give me a hint' },
+  { label: '📝 Practice quiz', text: 'Practice' },
+]
 
-/**
- * ChatWindow Component
- * 
- * The main interface where the student interacts with the AI tutor.
- * Handles fetching chat history, sending messages, and streaming responses
- * in real-time via Server-Sent Events (SSE).
- * 
- * Props:
- * - sessionId: The ID of the session to display
- * - onMessageSent: Callback triggered when a new message is successfully sent
- */
-function ChatWindow({ sessionId, onMessageSent }) {
-    // Stores the array of finalized messages (both user and assistant)
-    const [messages, setMessages] = useState([])
-    
-    // Tracks if we are waiting for the backend to start sending data
-    const [isLoading, setIsLoading] = useState(false)
-    
-    // Stores the chunk-by-chunk text as it streams in from Ollama
-    const [streamingContent, setStreamingContent] = useState('')
-    
-    // Ref used to auto-scroll to the bottom of the chat
-    const messagesEndRef = useRef(null)
+function Toast({ message, onClose }) {
+  useEffect(() => {
+    const t = setTimeout(onClose, 2500)
+    return () => clearTimeout(t)
+  }, [onClose])
 
-    /**
-     * Effect: Fetch Chat History
-     * Runs whenever the `sessionId` changes. Replaces the current `messages`
-     * array with the history pulled from the SQLite database.
-     */
-    useEffect(() => {
-        if (!sessionId) return;
-        fetch(`${API_URL}/session/${sessionId}/history`)
-            .then(res => {
-                if (!res.ok) throw new Error("Not found")
-                return res.json()
-            })
-            .then(data => {
-                setMessages(data.messages || [])
-            })
-            .catch(err => {
-                console.log("New session or fetch error", err)
-                setMessages([]) // Default to empty if it's a brand new session
-            })
-    }, [sessionId])
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20, scale: 0.9 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 10, scale: 0.9 }}
+      className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-2 px-4 py-2.5 rounded-xl pointer-events-none"
+      style={{
+        background: 'rgba(20,14,32,0.97)',
+        border: '1px solid rgba(0,255,198,0.2)',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.5), 0 0 20px rgba(0,255,198,0.1)',
+        backdropFilter: 'blur(16px)',
+      }}
+    >
+      <CheckCircle size={14} className="text-[#00ffc6]" />
+      <span className="text-[12px] text-white/80 font-medium">{message}</span>
+    </motion.div>
+  )
+}
 
-    /**
-     * Effect: Auto-Scroll
-     * Runs whenever `messages` or `streamingContent` changes, smoothly
-     * scrolling the user to the bottom of the screen.
-     */
-    useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }, [messages, streamingContent])
+function ChatWindow({ conversation, subjectMeta, userProfile, onMessageSent, onTutorReply, onMarkSolved, onMenuToggle }) {
+  const [messages, setMessages] = useState(conversation.messages || [])
+  const [solved, setSolved] = useState(conversation.solved || false)
+  const [isTutorTyping, setIsTutorTyping] = useState(false)
+  const [showConfetti, setShowConfetti] = useState(false)
+  const [sessionTimer, setSessionTimer] = useState(0)
+  const [timerRunning, setTimerRunning] = useState(true)
+  const [isLoading, setIsLoading] = useState(true)
+  const [earnedXp, setEarnedXp] = useState(0)
+  const [bookmarks, setBookmarks] = useState(new Set())
+  const [replyTo, setReplyTo] = useState(null)
+  const [toast, setToast] = useState(null)
+  const messagesEndRef = useRef(null)
+  const meta = subjectMeta[conversation.subject]
 
-    /**
-     * Handles sending a message to the backend and parsing the SSE stream.
-     */
-    async function sendMessage(userText) {
-        // 1. Instantly display the user's message in the UI
-        const userMessage = {
-            role: 'user',
-            content: userText
-        }
-        setMessages(prev => [...prev, userMessage])
-        
-        // 2. Set loading states
-        setIsLoading(true)
-        setStreamingContent('')
+  useEffect(() => {
+    setIsLoading(true)
+    setMessages(conversation.messages || [])
+    setSolved(conversation.solved || false)
+    setEarnedXp(0)
+    setBookmarks(new Set())
+    setReplyTo(null)
+    const timer = setTimeout(() => setIsLoading(false), 500)
+    return () => clearTimeout(timer)
+  }, [conversation.id])
 
-        try {
-            // 3. Make POST request to the streaming endpoint
-            const response = await fetch(`${API_URL}/chat/stream`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    session_id: sessionId,
-                    message: userText,
-                    student_name: 'Student',
-                    class_level: 11,
-                    learner_type: 'text'
-                })
-            })
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, isTutorTyping])
 
-            // 4. Set up the stream reader
-            const reader = response.body.getReader()
-            const decoder = new TextDecoder()
-            let fullText = ''
+  useEffect(() => {
+    let interval
+    if (timerRunning) interval = setInterval(() => setSessionTimer(prev => prev + 1), 1000)
+    return () => clearInterval(interval)
+  }, [timerRunning])
 
-            // 5. Read chunks continuously until the stream finishes
-            while (true) {
-                const { done, value } = await reader.read()
-                if (done) break
+  function fmt(seconds) {
+    const m = Math.floor(seconds / 60)
+    const s = seconds % 60
+    return `${m}:${s.toString().padStart(2, '0')}`
+  }
 
-                const chunk = decoder.decode(value)
-                const lines = chunk.split('\n')
+  function showToast(message) {
+    setToast(message)
+  }
 
-                // Parse the Server-Sent Events (SSE) format
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        try {
-                            const data = JSON.parse(line.slice(6))
+  function handleCopy() {
+    showToast('Message copied!')
+  }
 
-                            // If it's a token, append it to our ongoing string
-                            if (data.type === 'token') {
-                                fullText += data.text
-                                setStreamingContent(fullText)
-                            }
+  function handleBookmark(msgId) {
+    setBookmarks(prev => {
+      const next = new Set(prev)
+      if (next.has(msgId)) {
+        next.delete(msgId)
+        showToast('Bookmark removed')
+      } else {
+        next.add(msgId)
+        showToast('Message bookmarked!')
+      }
+      return next
+    })
+  }
 
-                            // If Ollama is done generating
-                            if (data.type === 'done') {
-                                // Add the fully formed message to the messages array
-                                setMessages(prev => [...prev, {
-                                    role: 'assistant',
-                                    content: fullText
-                                }])
-                                // Clear the temporary streaming state
-                                setStreamingContent('')
-                                // Ping App.jsx so the Sidebar can update
-                                if (onMessageSent) onMessageSent()
-                            }
+  function handleReply(message) {
+    setReplyTo(message)
+  }
 
-                        } catch (e) {
-                            // Safely ignore malformed JSON chunks from the stream
-                        }
-                    }
-                }
-            }
+  function handleSend(text, images = []) {
+    const replyContent = replyTo
+      ? `> ${replyTo.content?.slice(0, 80)}${replyTo.content?.length > 80 ? '...' : ''}\n\n${text}`
+      : text
 
-        } catch (error) {
-            console.error('Chat error:', error)
-            setMessages(prev => [...prev, {
-                role: 'assistant',
-                content: 'Error: Could not connect to tutor.'
-            }])
-        } finally {
-            setIsLoading(false)
-        }
+    const newMsg = {
+      id: Date.now().toString(),
+      role: 'student',
+      content: replyContent,
+      images,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      replyTo: replyTo ? { id: replyTo.id, content: replyTo.content?.slice(0, 60), role: replyTo.role } : null,
     }
+    setMessages(prev => [...prev, newMsg])
+    onMessageSent(conversation.id, text)
+    setEarnedXp(prev => prev + 10)
+    setIsTutorTyping(true)
+    setReplyTo(null)
+    setTimeout(() => {
+      setIsTutorTyping(false)
+      const replies = images.length > 0
+        ? [
+            "I can see your image! Let me help you with that...",
+            "Thanks for sharing the image. Here's what I notice...",
+            "Great! Looking at what you've shared, let me explain...",
+          ]
+        : [
+            "Great question! Let's break this down step by step...",
+            "Excellent thinking! Here's how this connects to what you know...",
+            "I see where you're going. The key insight is...",
+            "Perfect! Let's build on that with a concrete example...",
+            "You're on the right track! Here's the framework...",
+          ]
+      const reply = replies[Math.floor(Math.random() * replies.length)]
+      const tutorMsg = {
+        id: (Date.now() + 1).toString(),
+        role: 'tutor',
+        content: reply,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }
+      setMessages(prev => [...prev, tutorMsg])
+      setEarnedXp(prev => prev + 15)
+      onTutorReply(conversation.id, reply)
+    }, 1800 + Math.random() * 1200)
+  }
 
-    return (
-        <div className="flex flex-col h-full bg-slate-900/50 backdrop-blur-xl relative">
-            
-            {/* Top Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-slate-900/80 backdrop-blur-md sticky top-0 z-10">
-                <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center">
-                        <Bot size={18} className="text-blue-400" />
-                    </div>
-                    <div>
-                        <h1 className="text-white font-medium tracking-wide">VidyaLoop</h1>
-                        <p className="text-slate-400 text-xs">Socratic AI Assistant</p>
-                    </div>
-                </div>
+  function handleQuickReply(text) { handleSend(text, []) }
+
+  function handleMarkSolved() {
+    setSolved(true)
+    setShowConfetti(true)
+    setEarnedXp(prev => prev + 50)
+    onMarkSolved()
+    setTimeout(() => setShowConfetti(false), 3000)
+  }
+
+  return (
+    <div className="h-full flex flex-col bg-transparent pointer-events-auto">
+      {showConfetti && <ConfettiEffect />}
+
+      {/* ── Toast ── */}
+      <AnimatePresence>
+        {toast && <Toast message={toast} onClose={() => setToast(null)} />}
+      </AnimatePresence>
+
+      {/* ── Header ── */}
+      <div
+        className="flex items-center justify-between pl-14 pr-3 md:pl-5 md:pr-4 py-3 flex-shrink-0"
+        style={{
+          background: 'linear-gradient(180deg, rgba(12,4,20,0.96) 0%, rgba(10,4,18,0.88) 100%)',
+          borderBottom: '1px solid rgba(0,255,198,0.08)',
+          backdropFilter: 'blur(16px)',
+        }}
+      >
+        {/* Left: subject info */}
+        <div className="flex items-center gap-2.5 md:gap-3 min-w-0">
+          <div
+            className={`w-9 h-9 md:w-10 md:h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm md:text-base shadow-lg flex-shrink-0 ${meta.color}`}
+            style={{ boxShadow: '0 4px 16px rgba(0,0,0,0.35)' }}
+          >
+            <span>{meta.icon}</span>
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="font-bold text-xs md:text-sm truncate max-w-[110px] sm:max-w-[180px] md:max-w-none text-white/90">
+                {conversation.chapter}
+              </h1>
+              <span
+                className="text-[8px] md:text-[9px] font-bold px-2 py-0.5 rounded-full flex-shrink-0"
+                style={{ background: 'rgba(0,255,198,0.1)', color: '#00ffc6', border: '1px solid rgba(0,255,198,0.2)' }}
+              >
+                {meta.tag}
+              </span>
             </div>
-
-            {/* Scrollable Message Area */}
-            <div className="flex-1 overflow-y-auto px-4 py-8 custom-scrollbar">
-                <div className="max-w-3xl mx-auto flex flex-col gap-6">
-                    
-                    {/* Empty State Welcome Screen */}
-                    {messages.length === 0 && (
-                        <motion.div 
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            className="flex flex-col items-center justify-center py-20 text-center"
-                        >
-                            <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-xl shadow-blue-900/20 mb-6">
-                                <Sparkles className="text-white" size={28} />
-                            </div>
-                            <h2 className="text-white text-2xl font-semibold mb-3">
-                                How can I help you today?
-                            </h2>
-                            <p className="text-slate-400 max-w-md leading-relaxed">
-                                Ask me anything about CBSE Physics, Chemistry, or Math. I will guide you to discover the answers yourself.
-                            </p>
-                        </motion.div>
-                    )}
-
-                    {/* Render existing messages with AnimatePresence for smooth mounting */}
-                    <AnimatePresence initial={false}>
-                        {messages.map((msg, index) => (
-                            <MessageBubble
-                                key={index}
-                                role={msg.role}
-                                content={msg.content}
-                            />
-                        ))}
-                    </AnimatePresence>
-
-                    {/* Render the currently streaming message (if any) */}
-                    {streamingContent && (
-                        <MessageBubble
-                            role="assistant"
-                            content={streamingContent}
-                            isStreaming={true}
-                        />
-                    )}
-                    
-                    {/* Invisible div to scroll down to */}
-                    <div ref={messagesEndRef} className="h-4" />
-                </div>
+            <div className="hidden md:flex items-center gap-1 mt-0.5">
+              <span className="text-[9px] text-white/30">Class {userProfile.classLevel}</span>
+              <ChevronRight size={7} className="text-white/20" />
+              <span className="text-[9px] text-white/30">{conversation.subject}</span>
+              <ChevronRight size={7} className="text-white/20" />
+              <span className="text-[9px] font-medium" style={{ color: 'rgba(0,255,198,0.7)' }}>{conversation.chapter}</span>
             </div>
-
-            {/* Bottom Input Area */}
-            <div className="p-4 bg-gradient-to-t from-slate-950 via-slate-900 to-transparent pt-10">
-                <div className="max-w-3xl mx-auto relative">
-                    
-                    {/* "Thinking" indicator shown before the stream starts */}
-                    {isLoading && !streamingContent && (
-                        <motion.div 
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            className="absolute -top-8 left-0 right-0 text-center text-xs text-blue-400/80 font-medium tracking-wide animate-pulse"
-                        >
-                            Tutor is thinking deeply...
-                        </motion.div>
-                    )}
-                    
-                    <InputBar onSend={sendMessage} disabled={isLoading} />
-                </div>
-            </div>
+          </div>
         </div>
-    )
+
+        {/* Right: stats & controls */}
+        <div className="flex items-center gap-1.5 md:gap-2 flex-shrink-0">
+          {/* XP badge */}
+          <AnimatePresence mode="wait">
+            {earnedXp > 0 && (
+              <motion.div
+                key={earnedXp}
+                initial={{ scale: 0.7, opacity: 0, y: -6 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="hidden md:flex items-center gap-1 px-2 py-0.5 rounded-full"
+                style={{ background: 'rgba(255,51,102,0.12)', border: '1px solid rgba(255,51,102,0.2)' }}
+              >
+                <Zap size={9} className="text-[#ff3366] fill-[#ff3366]" />
+                <span className="text-[9px] font-bold text-[#ff3366]">+{earnedXp} XP</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Bookmarks count */}
+          {bookmarks.size > 0 && (
+            <div
+              className="hidden md:flex items-center gap-1 px-2 py-1 rounded-full text-[9px] font-bold"
+              style={{ background: 'rgba(255,170,0,0.1)', color: '#ffaa00', border: '1px solid rgba(255,170,0,0.15)' }}
+            >
+              <BookOpen size={9} className="fill-[#ffaa00] text-[#ffaa00]" />
+              <span>{bookmarks.size}</span>
+            </div>
+          )}
+
+          {/* Timer */}
+          <div
+            className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[9px] font-mono"
+            style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.35)', border: '1px solid rgba(255,255,255,0.06)' }}
+          >
+            <Clock size={9} />
+            {fmt(sessionTimer)}
+          </div>
+
+          {/* Solved button */}
+          <motion.button
+            onClick={handleMarkSolved}
+            disabled={solved}
+            whileTap={{ scale: 0.9 }}
+            className="flex w-8 h-8 rounded-xl items-center justify-center transition-all"
+            style={{
+              background: solved ? 'rgba(0,255,198,0.12)' : 'rgba(255,255,255,0.05)',
+              color: solved ? '#00ffc6' : 'rgba(255,255,255,0.35)',
+              border: solved ? '1px solid rgba(0,255,198,0.25)' : '1px solid rgba(255,255,255,0.07)',
+            }}
+            title={solved ? 'Solved!' : 'Mark as solved'}
+          >
+            {solved
+              ? <Award size={13} className="fill-[#00ffc6] text-[#00ffc6]" />
+              : <Award size={13} />
+            }
+          </motion.button>
+
+          {/* Streak */}
+          <div
+            className="flex items-center gap-1 px-2 py-1 rounded-full text-[9px] font-bold"
+            style={{ background: 'rgba(255,51,102,0.1)', color: '#ff3366', border: '1px solid rgba(255,51,102,0.15)' }}
+          >
+            <Flame size={9} className="fill-[#ff3366] text-[#ff3366]" />
+            <span>{userProfile.streak}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Messages area ── */}
+      <div
+        className="flex-1 overflow-y-auto custom-scrollbar"
+        style={{
+          background: 'linear-gradient(180deg, rgba(10,6,20,0.85) 0%, rgba(8,4,16,0.9) 50%, rgba(12,4,20,0.85) 100%)',
+        }}
+      >
+        {/* Subtle grid bg */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            backgroundImage: 'linear-gradient(rgba(0,255,198,0.015) 1px, transparent 1px), linear-gradient(90deg, rgba(0,255,198,0.015) 1px, transparent 1px)',
+            backgroundSize: '48px 48px',
+          }}
+        />
+
+        <div className="relative px-3 md:px-5 py-4 md:py-6">
+          <div className="max-w-3xl mx-auto flex flex-col gap-3 md:gap-4">
+
+            {/* Empty state */}
+            {!isLoading && messages.length === 0 && !isTutorTyping && (
+              <motion.div
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex flex-col items-center justify-center py-16 gap-4"
+              >
+                <div
+                  className="w-14 h-14 rounded-2xl flex items-center justify-center"
+                  style={{ background: 'rgba(0,255,198,0.07)', border: '1px solid rgba(0,255,198,0.12)' }}
+                >
+                  <Sparkles size={24} className="text-[#00ffc6]/50" />
+                </div>
+                <div className="text-center">
+                  <p className="text-sm font-semibold text-white/40">Start the conversation</p>
+                  <p className="text-[11px] text-white/20 mt-1">Ask a question or pick a quick reply below</p>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Skeleton loading */}
+            {isLoading ? (
+              <div className="space-y-4 pt-4">
+                {[1, 2, 3].map(i => (
+                  <div key={i} className={`flex ${i % 2 === 0 ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`flex items-end gap-2 ${i % 2 === 0 ? 'flex-row-reverse' : 'flex-row'}`}>
+                      <div className="w-7 h-7 rounded-xl animate-shimmer flex-shrink-0" style={{ background: 'rgba(0,255,198,0.06)' }} />
+                      <div
+                        className={`h-12 ${i === 1 ? 'w-48' : i === 2 ? 'w-36' : 'w-60'} rounded-2xl animate-shimmer`}
+                        style={{ background: 'rgba(255,255,255,0.04)' }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <AnimatePresence initial={false}>
+                {messages.map(msg => (
+                  <MessageBubble
+                    key={msg.id}
+                    message={msg}
+                    onCopy={handleCopy}
+                    onBookmark={handleBookmark}
+                    onReply={handleReply}
+                    isBookmarked={bookmarks.has(msg.id)}
+                  />
+                ))}
+              </AnimatePresence>
+            )}
+
+            {/* Tutor typing indicator */}
+            {isTutorTyping && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex items-end gap-2"
+              >
+                <div
+                  className={`w-7 h-7 md:w-8 md:h-8 rounded-xl flex items-center justify-center flex-shrink-0 shadow-md ${meta.color}`}
+                  style={{ boxShadow: '0 0 12px rgba(0,255,198,0.15)' }}
+                >
+                  <span className="text-[11px]">{meta.icon}</span>
+                </div>
+                <div
+                  className="px-3.5 py-2.5 rounded-2xl rounded-bl-md"
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(30,16,48,0.95) 0%, rgba(20,12,35,0.9) 100%)',
+                    border: '1px solid rgba(0,255,198,0.12)',
+                    boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+                  }}
+                >
+                  <TypingIndicator />
+                </div>
+              </motion.div>
+            )}
+
+            {/* Solved banner */}
+            {solved && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9, y: 8 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                className="flex items-center justify-center gap-2 py-4"
+              >
+                <div
+                  className="flex items-center gap-2.5 px-5 py-2.5 rounded-2xl"
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(0,255,198,0.12), rgba(0,255,198,0.05))',
+                    border: '1px solid rgba(0,255,198,0.25)',
+                    boxShadow: '0 0 24px rgba(0,255,198,0.1)',
+                  }}
+                >
+                  <Award size={16} className="text-[#00ffc6] fill-[#00ffc6]" />
+                  <span className="text-sm font-bold text-[#00ffc6]">Chapter mastered!</span>
+                  <span
+                    className="text-[9px] font-bold px-2 py-0.5 rounded-full"
+                    style={{ background: 'rgba(255,51,102,0.15)', color: '#ff3366' }}
+                  >
+                    +50 XP
+                  </span>
+                </div>
+              </motion.div>
+            )}
+
+            <div ref={messagesEndRef} className="h-3" />
+          </div>
+        </div>
+      </div>
+
+      {/* ── Quick replies ── */}
+      <div
+        className="flex-shrink-0 px-3 md:px-5 pt-2.5 pb-1.5"
+        style={{ background: 'rgba(10,4,18,0.9)', borderTop: '1px solid rgba(255,255,255,0.04)' }}
+      >
+        <div className="max-w-3xl mx-auto flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+          {quickReplies.map((reply, i) => (
+            <motion.button
+              key={i}
+              onClick={() => handleQuickReply(reply.text)}
+              whileTap={{ scale: 0.95 }}
+              className="flex-shrink-0 text-[10px] md:text-[11px] font-medium px-3 py-1.5 rounded-xl transition-all duration-200"
+              style={{
+                background: 'rgba(0,255,198,0.04)',
+                color: 'rgba(0,255,198,0.65)',
+                border: '1px solid rgba(0,255,198,0.1)',
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = 'rgba(0,255,198,0.1)'
+                e.currentTarget.style.borderColor = 'rgba(0,255,198,0.22)'
+                e.currentTarget.style.color = 'rgba(0,255,198,0.9)'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = 'rgba(0,255,198,0.04)'
+                e.currentTarget.style.borderColor = 'rgba(0,255,198,0.1)'
+                e.currentTarget.style.color = 'rgba(0,255,198,0.65)'
+              }}
+            >
+              {reply.label}
+            </motion.button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Input area ── */}
+      <div
+        className="flex-shrink-0 px-3 md:px-5 pb-3 md:pb-4 pt-1.5"
+        style={{ background: 'rgba(10,4,18,0.9)' }}
+      >
+        <div className="max-w-3xl mx-auto">
+          <InputBar
+            onSend={handleSend}
+            disabled={isTutorTyping}
+            conversationId={conversation.id}
+            replyTo={replyTo}
+            onCancelReply={() => setReplyTo(null)}
+          />
+        </div>
+      </div>
+    </div>
+  )
 }
 
 export default ChatWindow
