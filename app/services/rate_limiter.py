@@ -13,7 +13,7 @@ from collections import defaultdict
 from datetime import date
 from sqlalchemy import text
 from app.core.config import settings
-from app.database import has_postgres, AsyncSessionLocal, SessionLocal
+from app.database import is_postgres, AsyncSessionLocal, SessionLocal
 
 
 class RateLimiter:
@@ -51,7 +51,7 @@ class RateLimiter:
     # --- RPD (persisted via database) ---
 
     async def check_rpd(self) -> bool:
-        if not has_postgres:
+        if not is_postgres():
             return True
         today = date.today()
         async with AsyncSessionLocal() as db:
@@ -64,7 +64,7 @@ class RateLimiter:
             return count < self.rpd_limit
 
     async def increment_rpd(self):
-        if not has_postgres:
+        if not is_postgres():
             return
         today = date.today()
         async with AsyncSessionLocal() as db:
@@ -78,7 +78,7 @@ class RateLimiter:
             await db.commit()
 
     async def rpd_remaining(self) -> int:
-        if not has_postgres:
+        if not is_postgres():
             return self.rpd_limit
         today = date.today()
         async with AsyncSessionLocal() as db:

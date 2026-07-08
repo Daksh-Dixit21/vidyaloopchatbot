@@ -10,7 +10,7 @@ When not set, falls back to sync SQLite for local dev.
 
 from app.models.storage import Session, Message, SessionSummary
 from app.models.database import SessionDB, MessageDB
-from app.database import has_postgres, AsyncSessionLocal, SessionLocal
+from app.database import is_postgres, AsyncSessionLocal, SessionLocal
 from datetime import datetime
 from sqlalchemy import select, func, delete
 from sqlalchemy.orm import selectinload, joinedload
@@ -23,7 +23,7 @@ class StorageService:
     """
 
     async def create_session(self, session: Session) -> Session:
-        if has_postgres:
+        if is_postgres():
             async with AsyncSessionLocal() as db:
                 db_session = SessionDB(
                     session_id=session.session_id,
@@ -56,7 +56,7 @@ class StorageService:
                 db.close()
 
     async def get_session(self, session_id: str) -> Session | None:
-        if has_postgres:
+        if is_postgres():
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
                     select(SessionDB).where(SessionDB.session_id == session_id)
@@ -96,7 +96,7 @@ class StorageService:
                 db.close()
 
     async def delete_session(self, session_id: str) -> bool:
-        if has_postgres:
+        if is_postgres():
             async with AsyncSessionLocal() as db:
                 # Delete messages first (FK constraint)
                 await db.execute(
@@ -124,7 +124,7 @@ class StorageService:
                 db.close()
 
     async def list_sessions(self) -> list[SessionSummary]:
-        if has_postgres:
+        if is_postgres():
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
                     select(SessionDB).order_by(SessionDB.started_at.desc())
@@ -177,7 +177,7 @@ class StorageService:
                 db.close()
 
     async def add_message(self, message: Message) -> Message:
-        if has_postgres:
+        if is_postgres():
             async with AsyncSessionLocal() as db:
                 db_message = MessageDB(
                     message_id=message.message_id,
@@ -208,7 +208,7 @@ class StorageService:
                 db.close()
 
     async def get_messages(self, session_id: str) -> list[Message]:
-        if has_postgres:
+        if is_postgres():
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
                     select(MessageDB)
@@ -251,7 +251,7 @@ class StorageService:
                 db.close()
 
     async def get_message_count(self, session_id: str) -> int:
-        if has_postgres:
+        if is_postgres():
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
                     select(func.count(MessageDB.message_id)).where(
@@ -271,7 +271,7 @@ class StorageService:
                 db.close()
 
     async def get_stats(self) -> dict:
-        if has_postgres:
+        if is_postgres():
             async with AsyncSessionLocal() as db:
                 total_sessions_result = await db.execute(
                     select(func.count(SessionDB.session_id))

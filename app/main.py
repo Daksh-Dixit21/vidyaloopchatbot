@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from app.core.config import settings
-from app.database import init_db, init_db_async, has_postgres
+from app.database import init_db, init_db_async, is_postgres
 from app.services.llm import llm_service as ollama_service
 from app.services.groq_llm import groq_llm_service
 from app.services.storage import storage
@@ -41,12 +41,8 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     """Initialize database tables and warm up caches."""
-    if has_postgres:
-        try:
-            await init_db_async()
-        except Exception as e:
-            print(f"WARNING: Could not connect to PostgreSQL: {e}")
-            print("Falling back to SQLite. Set DATABASE_URL correctly or remove it to use SQLite only.")
+    if is_postgres():
+        await init_db_async()
     else:
         init_db()
 
@@ -84,7 +80,7 @@ async def health():
     return {
         "status": "ok",
         "version": settings.VERSION,
-        "database": "postgresql" if has_postgres else "sqlite",
+        "database": "postgresql" if is_postgres() else "sqlite",
         "provider": {
             "active": settings.LLM_PROVIDER,
             "groq_configured": bool(settings.GROQ_API_KEY),
