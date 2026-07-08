@@ -39,7 +39,7 @@ function Toast({ message, onClose }) {
   )
 }
 
-function ChatWindow({ conversation, subjectMeta, userProfile, onMessageSent, onTutorReply, onMarkSolved, onMenuToggle, onApiSend }) {
+function ChatWindow({ conversation, streamingConvId, subjectMeta, userProfile, onMessageSent, onTutorReply, onMarkSolved, onMenuToggle, onApiSend }) {
   const [messages, setMessages] = useState(conversation.messages || [])
   const [solved, setSolved] = useState(conversation.solved || false)
   const [isTutorTyping, setIsTutorTyping] = useState(false)
@@ -311,7 +311,7 @@ function ChatWindow({ conversation, subjectMeta, userProfile, onMessageSent, onT
           <div className="max-w-3xl mx-auto flex flex-col gap-3 md:gap-4">
 
             {/* Empty state */}
-            {!isLoading && messages.length === 0 && !isTutorTyping && (
+            {!isLoading && messages.length === 0 && !isTutorTyping && !streamingConvId && (
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -347,7 +347,7 @@ function ChatWindow({ conversation, subjectMeta, userProfile, onMessageSent, onT
               </div>
             ) : (
               <AnimatePresence initial={false}>
-                {messages.map(msg => (
+                {messages.map((msg, idx) => (
                   <MessageBubble
                     key={msg.id}
                     message={msg}
@@ -355,13 +355,40 @@ function ChatWindow({ conversation, subjectMeta, userProfile, onMessageSent, onT
                     onBookmark={handleBookmark}
                     onReply={handleReply}
                     isBookmarked={bookmarks.has(msg.id)}
+                    isStreaming={streamingConvId === conversation.id && msg.role === 'tutor' && idx === messages.length - 1}
                   />
                 ))}
               </AnimatePresence>
             )}
 
-            {/* Tutor typing indicator */}
+            {/* Tutor typing indicator (mock mode) */}
             {isTutorTyping && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex items-end gap-2"
+              >
+                <div
+                  className={`w-7 h-7 md:w-8 md:h-8 rounded-xl flex items-center justify-center flex-shrink-0 shadow-md ${meta.color}`}
+                  style={{ boxShadow: '0 0 12px rgba(0,255,198,0.15)' }}
+                >
+                  <span className="text-[11px]">{meta.icon}</span>
+                </div>
+                <div
+                  className="px-3.5 py-2.5 rounded-2xl rounded-bl-md"
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(30,16,48,0.95) 0%, rgba(20,12,35,0.9) 100%)',
+                    border: '1px solid rgba(0,255,198,0.12)',
+                    boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+                  }}
+                >
+                  <TypingIndicator />
+                </div>
+              </motion.div>
+            )}
+
+            {/* Streaming typing indicator (real API mode) */}
+            {streamingConvId === conversation.id && !isTutorTyping && (
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}

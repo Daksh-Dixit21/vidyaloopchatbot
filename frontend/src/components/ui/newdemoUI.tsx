@@ -212,6 +212,7 @@ const Hero1 = () => {
   const [activeConvId,      setActiveConvId]      = useState<string | null>(null);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showNewTopicModal, setShowNewTopicModal] = useState(false);
+  const [streamingConvId,   setStreamingConvId]   = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const activeConversation = conversations.find((c) => c.id === activeConvId) || null;
@@ -227,11 +228,18 @@ const Hero1 = () => {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    if (searchText.trim()) setIsChatMode(true);
+    const text = searchText.trim();
+    if (text) {
+      setIsChatMode(true);
+      handleSendFromApp(text);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && searchText.trim()) setIsChatMode(true);
+    if (e.key === "Enter" && searchText.trim()) {
+      setIsChatMode(true);
+      handleSendFromApp(searchText.trim());
+    }
   };
 
   function handleSelectConversation(id: string) {
@@ -340,34 +348,41 @@ const Hero1 = () => {
       )
     );
 
-    // Add empty placeholder for the streaming response
-    const tutorPlaceholderId = (Date.now() + 1).toString();
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id === convId
-          ? { ...c, messages: [...c.messages, { id: tutorPlaceholderId, role: "tutor", content: "", timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }] }
-          : c
-      )
-    );
+    // Show typing indicator while waiting for first token
+    setStreamingConvId(convId);
 
     let accumulated = "";
+    let tutorMsgId = "";
     await streamChat(convId, text, {
       onToken: (token) => {
         accumulated += token;
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.id === convId
-              ? { ...c, messages: c.messages.map((m) => (m.id === tutorPlaceholderId ? { ...m, content: accumulated } : m)) }
-              : c
-          )
-        );
+        if (!tutorMsgId) {
+          tutorMsgId = (Date.now() + 1).toString();
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === convId
+                ? { ...c, messages: [...c.messages, { id: tutorMsgId, role: "tutor", content: accumulated, timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }] }
+                : c
+            )
+          );
+          setStreamingConvId(null);
+        } else {
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === convId
+                ? { ...c, messages: c.messages.map((m) => (m.id === tutorMsgId ? { ...m, content: accumulated } : m)) }
+                : c
+            )
+          );
+        }
       },
-      onDone: () => {},
+      onDone: () => { setStreamingConvId(null); },
       onError: (error) => {
+        setStreamingConvId(null);
         setConversations((prev) =>
           prev.map((c) =>
             c.id === convId
-              ? { ...c, messages: c.messages.map((m) => (m.id === tutorPlaceholderId ? { ...m, content: accumulated || `Error: ${error}` } : m)) }
+              ? { ...c, messages: c.messages.map((m) => (m.id === tutorMsgId ? { ...m, content: accumulated || `Error: ${error}` } : m)) }
               : c
           )
         );
@@ -514,6 +529,7 @@ const Hero1 = () => {
                     <ChatWindow
                       key={activeConvId}
                       conversation={activeConversation}
+                      streamingConvId={streamingConvId}
                       subjectMeta={subjectMeta}
                       userProfile={userProfile}
                       onMessageSent={handleMessageSent}
@@ -581,7 +597,7 @@ const Hero1 = () => {
                 ].map((t) => (
                   <button
                     key={t}
-                    onClick={() => { setSearchText(t); setIsChatMode(true); }}
+                    onClick={() => { setSearchText(t); setIsChatMode(true); handleSendFromApp(t); }}
                     className="bg-[#1c1528] hover:bg-[#2a1f3d] rounded-full px-2.5 py-1 md:px-3 md:py-1.5 text-[9px] md:text-xs transition-all cursor-pointer"
                   >
                     {t}

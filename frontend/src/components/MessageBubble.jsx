@@ -11,7 +11,7 @@ import FlashcardBlock from './FlashcardBlock'
 
 const quickEmojis = ['👍', '❤️', '🎉', '💡', '✅', '🔥', '👀', '🚀']
 
-function MessageBubble({ message, onCopy, onBookmark, onReply, isBookmarked }) {
+function MessageBubble({ message, onCopy, onBookmark, onReply, isBookmarked, isStreaming }) {
   const [showStamp, setShowStamp] = useState(false)
   const [lightboxImg, setLightboxImg] = useState(null)
   const [showActions, setShowActions] = useState(false)
@@ -82,13 +82,15 @@ function MessageBubble({ message, onCopy, onBookmark, onReply, isBookmarked }) {
 
           {/* Bubble */}
           <div
-            className={`overflow-hidden ${isTutor ? '' : 'font-medium'} relative group`}
+            className={`overflow-hidden ${isTutor ? '' : 'font-medium'} relative group ${isStreaming ? 'animate-stream-pulse' : ''}`}
             style={isTutor ? {
               background: 'linear-gradient(135deg, rgba(30,16,48,0.95) 0%, rgba(20,12,35,0.9) 100%)',
               color: 'rgba(232,232,237,0.92)',
               border: '1px solid rgba(0,255,198,0.12)',
               borderRadius: '14px 14px 14px 4px',
-              boxShadow: '0 4px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04)',
+              boxShadow: isStreaming
+                ? '0 4px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04), 0 0 18px rgba(0,255,198,0.15)'
+                : '0 4px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04)',
             } : hasImages ? {
               background: 'linear-gradient(135deg, rgba(18,10,30,0.97) 0%, rgba(12,6,22,0.95) 100%)',
               color: 'rgba(232,232,237,0.92)',
@@ -139,7 +141,7 @@ function MessageBubble({ message, onCopy, onBookmark, onReply, isBookmarked }) {
 
             {/* ── Text content ── */}
             {isTutor ? (
-              <div className="px-3.5 py-2.5 md:px-4 md:py-3 text-[13px] md:text-sm leading-relaxed">
+              <div className="px-3.5 py-2.5 md:px-4 md:py-3 text-[13px] md:text-sm leading-relaxed message-fade-in">
                 <div className="prose prose-sm max-w-none
                   prose-p:leading-relaxed prose-p:my-1
                   prose-pre:p-0 prose-pre:bg-transparent prose-pre:my-2
@@ -152,7 +154,7 @@ function MessageBubble({ message, onCopy, onBookmark, onReply, isBookmarked }) {
                   prose-blockquote:border-l-[#00ffc6]/30 prose-blockquote:text-white/50
                   text-white/88">
                   <ReactMarkdown
-                    remarkPlugins={[remarkMath]}
+                    remarkPlugins={[[remarkMath, { singleDollar: false }]]}
                     rehypePlugins={[rehypeKatex]}
                     components={{
                       code({ node, inline, className, children, ...props }) {
