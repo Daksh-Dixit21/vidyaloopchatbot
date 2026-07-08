@@ -112,6 +112,12 @@ class GroqLLMService:
                     "max_tokens": 1024,
                 },
             ) as response:
+                if response.status_code != 200:
+                    body = await response.aread()
+                    err_msg = f"Groq API error {response.status_code}: {body.decode(errors='ignore')[:200]}"
+                    yield f"data: {json.dumps({'error': err_msg})}\n\n"
+                    return
+
                 async for line in response.aiter_lines():
                     if not line.startswith("data: "):
                         continue
