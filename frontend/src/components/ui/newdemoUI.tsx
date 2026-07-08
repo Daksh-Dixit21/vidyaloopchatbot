@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback } from "react";
 import { Menu, GraduationCap, Plus, X, BookOpen, Sparkles } from "lucide-react";
 import { Canvas } from "@react-three/fiber";
 import { Environment, ContactShadows } from "@react-three/drei";
@@ -10,6 +10,7 @@ import Sidebar from "../Sidebar";
 import ChatWindow from "../ChatWindow";
 import EmptyState from "../EmptyState";
 import InputBar from "../InputBar";
+import { streamChat, generateSessionId } from "../../services/api";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -247,7 +248,7 @@ const Hero1 = () => {
   /** Called when user submits the new-topic modal */
   function handleCreateTopic(subjectName: string, topicName: string) {
     setShowNewTopicModal(false);
-    const newId = "conv_new_" + Date.now();
+    const newId = generateSessionId();
     const newConv: Conversation = {
       id:           newId,
       subject:      subjectName,
@@ -305,23 +306,73 @@ const Hero1 = () => {
     );
   }
 
-  function handleSendFromApp(text: string) {
+  const handleSendFromApp = useCallback((text: string) => {
     if (activeConversation) {
-      handleMessageSent(activeConvId!, text);
-      setTimeout(() => {
-        const replies = [
-          "Great question! Let's break this down step by step...",
-          "Excellent thinking! Here's how this connects to what you know...",
-          "I see where you're going. The key insight is...",
-          "Perfect! Let's build on that with a concrete example...",
-          "You're on the right track! Here's the framework...",
-        ];
-        handleTutorReply(activeConvId!, replies[Math.floor(Math.random() * replies.length)]);
-      }, 1800 + Math.random() * 1200);
+      sendMessageAndStream(activeConvId!, text);
     } else {
       // Start a new session from the empty-state input bar
-      handleCreateTopic("General", text);
+      const newId = generateSessionId();
+      const newConv: Conversation = {
+        id: newId,
+        subject: "General",
+        chapter: text.substring(0, 50),
+        firstMessage: text,
+        lastMessage: text,
+        time: "Just now",
+        unread: 0,
+        progress: 0,
+        messages: [],
+      };
+      setConversations((prev) => [newConv, ...prev]);
+      setActiveConvId(newId);
+      sendMessageAndStream(newId, text);
     }
+  }, [activeConversation, activeConvId]);
+
+  async function sendMessageAndStream(convId: string, text: string) {
+    // Add user message
+    const userMsgId = Date.now().toString();
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === convId
+          ? { ...c, lastMessage: text, time: "Just now", messages: [...c.messages, { id: userMsgId, role: "student", content: text, timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }] }
+          : c
+      )
+    );
+
+    // Add empty placeholder for the streaming response
+    const tutorPlaceholderId = (Date.now() + 1).toString();
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === convId
+          ? { ...c, messages: [...c.messages, { id: tutorPlaceholderId, role: "tutor", content: "", timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }] }
+          : c
+      )
+    );
+
+    let accumulated = "";
+    await streamChat(convId, text, {
+      onToken: (token) => {
+        accumulated += token;
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === convId
+              ? { ...c, messages: c.messages.map((m) => (m.id === tutorPlaceholderId ? { ...m, content: accumulated } : m)) }
+              : c
+          )
+        );
+      },
+      onDone: () => {},
+      onError: (error) => {
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === convId
+              ? { ...c, messages: c.messages.map((m) => (m.id === tutorPlaceholderId ? { ...m, content: accumulated || `Error: ${error}` } : m)) }
+              : c
+          )
+        );
+      },
+    });
   }
 
   return (
