@@ -140,6 +140,35 @@ async def get_rate_limits():
     return await rate_limiter.status()
 
 
+@app.get("/debug/groq")
+async def debug_groq():
+    """Test Groq API connectivity directly."""
+    import httpx
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.GROQ_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": settings.GROQ_MODEL,
+                    "messages": [{"role": "user", "content": "say hello in one word"}],
+                    "stream": False,
+                },
+                timeout=15.0,
+            )
+            return {
+                "status": resp.status_code,
+                "body": resp.text[:500],
+                "model": settings.GROQ_MODEL,
+                "key_prefix": settings.GROQ_API_KEY[:8] + "..." if settings.GROQ_API_KEY else "NOT SET",
+            }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.post("/chat/stream")
 async def chat_stream(
     request: ChatRequest,
