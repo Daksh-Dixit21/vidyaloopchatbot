@@ -520,6 +520,7 @@ const Hero1 = () => {
                       onTutorReply={handleTutorReply}
                       onMarkSolved={handleMarkSolved}
                       onMenuToggle={() => setMobileSidebarOpen(true)}
+                      onApiSend={sendMessageAndStream}
                     />
                   ) : (
                     <EmptyState

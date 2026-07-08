@@ -39,7 +39,7 @@ function Toast({ message, onClose }) {
   )
 }
 
-function ChatWindow({ conversation, subjectMeta, userProfile, onMessageSent, onTutorReply, onMarkSolved, onMenuToggle }) {
+function ChatWindow({ conversation, subjectMeta, userProfile, onMessageSent, onTutorReply, onMarkSolved, onMenuToggle, onApiSend }) {
   const [messages, setMessages] = useState(conversation.messages || [])
   const [solved, setSolved] = useState(conversation.solved || false)
   const [isTutorTyping, setIsTutorTyping] = useState(false)
@@ -54,10 +54,15 @@ function ChatWindow({ conversation, subjectMeta, userProfile, onMessageSent, onT
   const messagesEndRef = useRef(null)
   const meta = subjectMeta[conversation.subject]
 
+  // Sync messages whenever the parent updates them (for real API streaming)
   useEffect(() => {
-    setIsLoading(true)
     setMessages(conversation.messages || [])
     setSolved(conversation.solved || false)
+  }, [conversation.messages, conversation.solved])
+
+  // Show loading animation and reset session state when switching conversations
+  useEffect(() => {
+    setIsLoading(true)
     setEarnedXp(0)
     setBookmarks(new Set())
     setReplyTo(null)
@@ -111,6 +116,12 @@ function ChatWindow({ conversation, subjectMeta, userProfile, onMessageSent, onT
     const replyContent = replyTo
       ? `> ${replyTo.content?.slice(0, 80)}${replyTo.content?.length > 80 ? '...' : ''}\n\n${text}`
       : text
+
+    if (onApiSend) {
+      onApiSend(conversation.id, replyContent)
+      setReplyTo(null)
+      return
+    }
 
     const newMsg = {
       id: Date.now().toString(),
