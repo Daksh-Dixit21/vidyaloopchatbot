@@ -3,9 +3,6 @@
 import * as React from "react";
 import { useState, useEffect } from "react";
 import { Menu } from "lucide-react";
-import { Canvas } from "@react-three/fiber";
-import { Environment, ContactShadows } from "@react-three/drei";
-import { RobotPrototype, ResponsiveGroup } from "./robot-hero";
 import Sidebar from "../Sidebar";
 import ChatWindow from "../ChatWindow";
 import EmptyState from "../EmptyState";
@@ -192,27 +189,6 @@ const ChatPage = ({ onBack }: ChatPageProps) => {
         <div className="w-[8rem] md:w-[10rem] h-[20rem] md:h-[30rem] bg-linear-90 from-white to-blue-300"></div>
         <div className="w-[8rem] md:w-[10rem] h-[20rem] md:h-[30rem] bg-linear-90 from-white to-blue-300"></div>
         <div className="w-[8rem] md:w-[10rem] h-[20rem] md:h-[30rem] bg-linear-90 from-white to-blue-300"></div>
-      </div>
-
-      {/* Robot */}
-      <div className="hidden md:block absolute right-0 top-1/2 -translate-y-1/2 w-[280px] lg:w-[380px] xl:w-[450px] h-[280px] lg:h-[380px] xl:h-[450px] z-[1] pointer-events-none">
-        <Canvas shadows camera={{ position: [0, 0.2, 6], fov: 40 }}>
-          <ambientLight intensity={0.75} color="#ffffff" />
-          <directionalLight position={[0, 6, 3]} intensity={0.4} color="#00ffe2" castShadow shadow-mapSize={[2048, 2048]} shadow-bias={-0.0005}>
-            <orthographicCamera attach="shadow-camera" args={[-1.5, 1.5, 1.5, -1.5, 0.1, 20]} />
-          </directionalLight>
-          <directionalLight position={[-5, 2, -5]} intensity={0.15} color="#dbdbdb" />
-          <Environment preset="studio" blur={0.5} />
-          <ResponsiveGroup>
-            <group>
-              <ContactShadows position={[0, -0.79, 0]} opacity={0.4} scale={15} resolution={1024} blur={1.7} far={2.5} color="#000000" />
-              <RobotPrototype
-                neckParams={{ baseR: 0.215, baseH: -0.050, midR: 0.280, midH: 0.020, lipBottomR: 0.295, lipBottomH: 0.045, lipTopR: 0.270, lipTopH: 0.055, innerR: 0.100, innerDropH: 0.000 }}
-                bodyParams={{ bodyBevelR: 0.235, bodyBevelY: 0.340, bodyBevelT: 0.025 }}
-              />
-            </group>
-          </ResponsiveGroup>
-        </Canvas>
       </div>
 
       {/* Header */}
